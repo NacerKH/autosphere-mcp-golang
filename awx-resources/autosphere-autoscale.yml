@@ -1,0 +1,142 @@
+---
+# Autosphere Auto-scaling Playbook
+# This playbook handles scaling of Autosphere services based on metrics
+
+- name: Autosphere Auto-scaling
+  hosts: autosphere_kubernetes
+  gather_facts: no
+  vars:
+    namespace: autosphere
+    scaling_metrics: {}
+
+  tasks:
+    - name: Get current resource metrics
+      k8s_info:
+        api_version: v1
+        kind: Pod
+        namespace: "{{ namespace }}"
+        label_selectors:
+          - app=autosphere-api
+      register: api_pods
+
+    - name: Get current replica counts
+      k8s_info:
+        api_version: apps/v1
+        kind: Deployment
+        namespace: "{{ namespace }}"
+        name: "{{ item }}"
+      loop:
+        - autosphere-api
+        - autosphere-workers
+        - autosphere-web
+      register: current_deployments
+
+    - name: Get pod metrics from metrics server
+      uri:
+        url: "http://metrics-server.kube-system.svc.cluster.local/metrics/pods"
+        method: GET
+      register: pod_metrics
+      ignore_errors: yes
+
+    - name: Calculate scaling decision
+      set_fact:
+        scaling_decision: |
+          {% set cpu_avg = (pod_metrics.json | selectattr('name', 'match', 'autosphere-.*') | map(attribute='cpu') | list | avg) %}
+          {% set memory_avg = (pod_metrics.json | selectattr('name', 'match', 'autosphere-.*') | map(attribute='memory') | list | avg) %}
+          {% if cpu_avg > scale_up_cpu_threshold | default(80) or memory_avg > scale_up_memory_threshold | default(85) %}
+          scale_up
+          {% elif cpu_avg < scale_down_cpu_threshold | default(20) and memory_avg < scale_down_memory_threshold | default(30) %}
+          scale_down
+          {% else %}
+          no_action
+          {% endif %}
+
+    - name: Scale up services
+      k8s:
+        state: present
+        definition:
+          apiVersion: apps/v1
+          kind: Deployment
+          metadata:
+            name: "{{ item.item }}"
+            namespace: "{{ namespace }}"
+          spec:
+            replicas: "{{ (item.resources[0].spec.replicas | int) + (scale_up_increment | default(2)) }}"
+      loop: "{{ current_deployments.results }}"
+      when: 
+        - scaling_decision == "scale_up"
+        - item.resources[0].spec.replicas < (max_replicas | default(10))
+
+    - name: Scale down services
+      k8s:
+        state: present
+        definition:
+          apiVersion: apps/v1
+          kind: Deployment
+          metadata:
+            name: "{{ item.item }}"
+            namespace: "{{ namespace }}"
+          spec:
+            replicas: "{{ [(item.resources[0].spec.replicas | int) - 1, min_replicas | default(2)] | max }}"
+      loop: "{{ current_deployments.results }}"
+      when: 
+        - scaling_decision == "scale_down"
+        - item.resources[0].spec.replicas > (min_replicas | default(2))
+
+    - name: Create scaling event
+      k8s:
+        state: present
+        definition:
+          apiVersion: v1
+          kind: Event
+          metadata:
+            name: "autoscale-{{ ansible_date_time.epoch }}"
+            namespace: "{{ namespace }}"
+          reason: "AutoScale"
+          message: "Autosphere auto-scaling action: {{ scaling_decision }}"
+          firstTimestamp: "{{ ansible_date_time.iso8601 }}"
+          lastTimestamp: "{{ ansible_date_time.iso8601 }}"
+          count: 1
+          type: "Normal"
+
+    - name: Wait for deployment rollout
+      k8s_info:
+        api_version: apps/v1
+        kind: Deployment
+        namespace: "{{ namespace }}"
+        name: "{{ item.item }}"
+        wait: true
+        wait_condition:
+          type: Progressing
+          status: "True"
+          reason: NewReplicaSetAvailable
+        wait_timeout: 300
+      loop: "{{ current_deployments.results }}"
+      when: scaling_decision != "no_action"
+
+    - name: Generate scaling report
+      set_fact:
+        scaling_report:
+          timestamp: "{{ ansible_date_time.iso8601 }}"
+          action: "{{ scaling_decision }}"
+          trigger: "{{ scaling_trigger | default('automatic') }}"
+          services_scaled: "{{ current_deployments.results | map(attribute='item') | list }}"
+          old_replicas: "{{ current_deployments.results | map(attribute='resources') | map('first') | map(attribute='spec.replicas') | list }}"
+          scaling_reason: |
+            {% if scaling_decision == 'scale_up' %}
+            High resource usage detected - CPU or Memory above threshold
+            {% elif scaling_decision == 'scale_down' %}
+            Low resource usage detected - opportunity to reduce costs
+            {% else %}
+            Resource usage within normal parameters
+            {% endif %}
+
+    - name: Display scaling summary
+      debug:
+        msg: |
+          === AUTOSPHERE SCALING SUMMARY ===
+          Timestamp: {{ scaling_report.timestamp }}
+          Action: {{ scaling_report.action }}
+          Trigger: {{ scaling_report.trigger }}
+          Services: {{ scaling_report.services_scaled | join(', ') }}
+          Reason: {{ scaling_report.scaling_reason }}

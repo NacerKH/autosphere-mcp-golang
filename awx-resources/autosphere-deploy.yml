@@ -1,0 +1,118 @@
+---
+# Autosphere Deployment Playbook
+# This playbook handles deployment and updates of Autosphere components
+
+- name: Deploy Autosphere Application
+  hosts: autosphere_servers
+  become: yes
+  vars:
+    autosphere_version: "{{ deployment_version | default('latest') }}"
+    deployment_strategy: "{{ strategy | default('rolling') }}"
+    health_check_retries: 10
+    health_check_delay: 30
+
+  pre_tasks:
+    - name: Validate deployment parameters
+      assert:
+        that:
+          - autosphere_version is defined
+          - deployment_strategy in ['rolling', 'blue_green', 'canary']
+        fail_msg: "Invalid deployment parameters"
+
+    - name: Create backup before deployment
+      include_tasks: tasks/backup.yml
+      when: create_backup | default(true)
+
+  tasks:
+    - name: Pull latest Docker images
+      docker_image:
+        name: "{{ item }}"
+        tag: "{{ autosphere_version }}"
+        source: pull
+        force_source: yes
+      loop:
+        - "autosphere/api:{{ autosphere_version }}"
+        - "autosphere/web:{{ autosphere_version }}"
+        - "autosphere/workers:{{ autosphere_version }}"
+
+    - name: Update application configuration
+      template:
+        src: "{{ item.src }}"
+        dest: "{{ item.dest }}"
+        backup: yes
+        mode: '0644'
+      loop:
+        - { src: 'config/app.conf.j2', dest: '/opt/autosphere/config/app.conf' }
+        - { src: 'config/database.conf.j2', dest: '/opt/autosphere/config/database.conf' }
+      notify: restart autosphere services
+
+    - name: Run database migrations
+      command: |
+        docker run --rm 
+        --network autosphere_network 
+        -e DATABASE_URL="{{ autosphere_database_url }}"
+        autosphere/api:{{ autosphere_version }} 
+        python manage.py migrate
+      register: migration_result
+      changed_when: "'No migrations to apply' not in migration_result.stdout"
+
+    - name: Deploy with rolling strategy
+      include_tasks: tasks/rolling_deploy.yml
+      when: deployment_strategy == "rolling"
+
+    - name: Deploy with blue-green strategy
+      include_tasks: tasks/blue_green_deploy.yml
+      when: deployment_strategy == "blue_green"
+
+    - name: Deploy with canary strategy
+      include_tasks: tasks/canary_deploy.yml
+      when: deployment_strategy == "canary"
+
+    - name: Wait for services to be healthy
+      uri:
+        url: "{{ autosphere_api_url }}/health"
+        method: GET
+        status_code: 200
+      register: health_check
+      until: health_check.status == 200
+      retries: "{{ health_check_retries }}"
+      delay: "{{ health_check_delay }}"
+
+    - name: Run post-deployment tests
+      include_tasks: tasks/smoke_tests.yml
+
+    - name: Update load balancer configuration
+      include_tasks: tasks/update_load_balancer.yml
+      when: update_load_balancer | default(true)
+
+  post_tasks:
+    - name: Clean up old Docker images
+      docker_prune:
+        images: yes
+        images_filters:
+          dangling: false
+          label: "app=autosphere"
+      when: cleanup_old_images | default(true)
+
+    - name: Send deployment notification
+      mail:
+        to: "{{ notification_email }}"
+        subject: "Autosphere Deployment {{ 'Successful' if ansible_failed_result is not defined else 'Failed' }}"
+        body: |
+          Deployment Details:
+          - Version: {{ autosphere_version }}
+          - Strategy: {{ deployment_strategy }}
+          - Started: {{ ansible_date_time.iso8601 }}
+          - Status: {{ 'Successful' if ansible_failed_result is not defined else 'Failed' }}
+          - Host: {{ inventory_hostname }}
+      when: notification_email is defined
+
+  handlers:
+    - name: restart autosphere services
+      systemd:
+        name: "{{ item }}"
+        state: restarted
+      loop:
+        - autosphere-api
+        - autosphere-workers
+        - autosphere-web

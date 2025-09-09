@@ -1,0 +1,39 @@
+# Example Claude Desktop configuration
+# Add this to your claude_desktop_config.json file
+
+{
+  "mcpServers": {
+    "autosphere-mcp-golang": {
+      "command": "go",
+      "args": ["run", "/Users/nacerkh/Desktop/dev/autosphere-mcp-golang/main.go"],
+      "env": {}
+    }
+  }
+}
+
+# Alternative configuration using the built binary:
+# {
+#   "mcpServers": {
+#     "autosphere-mcp-golang": {
+#       "command": "/Users/nacerkh/Desktop/dev/autosphere-mcp-golang/autosphere-mcp-server",
+#       "args": [],
+#       "env": {}
+#     }
+#   }
+# }
+
+# For testing with multiple servers:
+# {
+#   "mcpServers": {
+#     "autosphere-mcp-golang": {
+#       "command": "/Users/nacerkh/Desktop/dev/autosphere-mcp-golang/autosphere-mcp-server",
+#       "args": [],
+#       "env": {}
+#     },
+#     "other-mcp-server": {
+#       "command": "path/to/other/server",
+#       "args": [],
+#       "env": {}
+#     }
+#   }
+# }

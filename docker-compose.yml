@@ -1,0 +1,40 @@
+# Docker Compose for Autosphere MCP Server
+
+version: '3.8'
+
+services:
+  autosphere-mcp:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8080:8080"
+    environment:
+      - DEBUG=false
+      - AWX_URL=https://awx.autosphere.local
+    volumes:
+      - ./config:/app/config:ro
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    networks:
+      - autosphere-network
+
+  # Optional: Add AWX/Ansible Tower for real automation
+  # awx:
+  #   image: ansible/awx:latest
+  #   ports:
+  #     - "80:8052"
+  #   environment:
+  #     - SECRET_KEY=your-secret-key
+  #     - DATABASE_URL=postgresql://awx:password@postgres:5432/awx
+  #   networks:
+  #     - autosphere-network
+
+networks:
+  autosphere-network:
+    driver: bridge

@@ -1,0 +1,117 @@
+---
+# Autosphere Health Check Playbook
+# This playbook performs comprehensive health checks on Autosphere infrastructure
+
+- name: Autosphere Health Check
+  hosts: autosphere_servers
+  gather_facts: yes
+  vars:
+    health_check_results: {}
+    critical_thresholds:
+      cpu: 90
+      memory: 95
+      disk: 90
+    warning_thresholds:
+      cpu: 80
+      memory: 85
+      disk: 80
+
+  tasks:
+    - name: Check system resources
+      setup:
+        filter: 
+          - ansible_processor*
+          - ansible_memory*
+          - ansible_mounts
+
+    - name: Check API endpoint health
+      uri:
+        url: "{{ autosphere_api_url }}/health"
+        method: GET
+        status_code: 200
+        timeout: 10
+      register: api_health
+      ignore_errors: yes
+
+    - name: Check database connectivity
+      postgresql_ping:
+        db: "{{ autosphere_db_name }}"
+        login_host: "{{ autosphere_db_host }}"
+        login_user: "{{ autosphere_db_user }}"
+        login_password: "{{ autosphere_db_password }}"
+      register: db_health
+      ignore_errors: yes
+
+    - name: Check Redis cache
+      redis_info:
+        login_host: "{{ autosphere_redis_host }}"
+        login_port: "{{ autosphere_redis_port }}"
+      register: redis_health
+      ignore_errors: yes
+
+    - name: Check disk usage
+      shell: df -h {{ item }} | tail -1 | awk '{print $5}' | sed 's/%//'
+      loop:
+        - /
+        - /var/log
+        - /opt/autosphere
+      register: disk_usage
+
+    - name: Check memory usage
+      shell: free | grep Mem | awk '{printf "%.1f", $3/$2 * 100.0}'
+      register: memory_usage
+
+    - name: Check CPU load
+      shell: uptime | awk -F'load average:' '{ print $2 }' | awk '{ print $1 }' | sed 's/,//'
+      register: cpu_load
+
+    - name: Check running services
+      systemd:
+        name: "{{ item }}"
+        state: started
+      loop:
+        - nginx
+        - postgresql
+        - redis
+        - autosphere-api
+        - autosphere-workers
+      register: service_status
+      ignore_errors: yes
+
+    - name: Check log errors (last 1 hour)
+      shell: |
+        find /var/log/autosphere -name "*.log" -mmin -60 -exec grep -l "ERROR\|CRITICAL\|FATAL" {} \; | wc -l
+      register: error_logs
+
+    - name: Generate health report
+      set_fact:
+        health_report:
+          timestamp: "{{ ansible_date_time.iso8601 }}"
+          hostname: "{{ inventory_hostname }}"
+          api_status: "{{ 'healthy' if api_health.status == 200 else 'critical' }}"
+          database_status: "{{ 'healthy' if db_health is succeeded else 'critical' }}"
+          cache_status: "{{ 'healthy' if redis_health is succeeded else 'warning' }}"
+          disk_usage: "{{ disk_usage.results | map(attribute='stdout') | list }}"
+          memory_usage: "{{ memory_usage.stdout }}%"
+          cpu_load: "{{ cpu_load.stdout }}"
+          services_down: "{{ service_status.results | selectattr('failed', 'equalto', true) | map(attribute='item') | list }}"
+          recent_errors: "{{ error_logs.stdout }}"
+
+    - name: Save health report
+      copy:
+        content: "{{ health_report | to_nice_json }}"
+        dest: "/tmp/autosphere_health_{{ ansible_date_time.epoch }}.json"
+
+    - name: Display health summary
+      debug:
+        msg: |
+          === AUTOSPHERE HEALTH CHECK SUMMARY ===
+          Timestamp: {{ health_report.timestamp }}
+          Host: {{ health_report.hostname }}
+          API Status: {{ health_report.api_status }}
+          Database Status: {{ health_report.database_status }}
+          Cache Status: {{ health_report.cache_status }}
+          Memory Usage: {{ health_report.memory_usage }}
+          CPU Load: {{ health_report.cpu_load }}
+          Services Down: {{ health_report.services_down | length }}
+          Recent Errors: {{ health_report.recent_errors }}

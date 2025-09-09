@@ -1,0 +1,55 @@
+# Ignore build artifacts
+autosphere-mcp-server
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Ignore test binary
+*.test
+
+# Ignore output of the go coverage tool
+*.out
+
+# Ignore dependency directories
+vendor/
+
+# Ignore IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Ignore OS files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Ignore Git
+.git
+.gitignore
+
+# Ignore Docker files during build
+Dockerfile
+.dockerignore
+docker-compose.yml
+
+# Ignore documentation
+*.md
+ARCHITECTURE.md
+
+# Ignore backup files
+*.backup
+
+# Ignore logs
+*.log
+
+# Ignore temporary files
+tmp/
+temp/
