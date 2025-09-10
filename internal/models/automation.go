@@ -64,3 +64,61 @@ type AutoscaleOutput struct {
 	JobID       int    `json:"job_id,omitempty" jsonschema:"AWX job ID if automation was triggered"`
 	Status      string `json:"status" jsonschema:"operation status"`
 }
+
+// New models for additional tools
+
+type ListJobsArgs struct {
+	Limit  int    `json:"limit,omitempty" jsonschema:"maximum number of jobs to return (default: 20)"`
+	Status string `json:"status,omitempty" jsonschema:"filter by job status (successful, failed, running, pending)"`
+}
+
+type ListJobsOutput struct {
+	Jobs []JobSummary `json:"jobs" jsonschema:"list of jobs"`
+	Total int         `json:"total" jsonschema:"total number of jobs"`
+}
+
+type JobSummary struct {
+	ID          int    `json:"id" jsonschema:"job ID"`
+	Name        string `json:"name" jsonschema:"job name"`
+	Status      string `json:"status" jsonschema:"job status"`
+	Template    string `json:"template" jsonschema:"job template name"`
+	StartedAt   string `json:"started_at,omitempty" jsonschema:"when the job started"`
+	FinishedAt  string `json:"finished_at,omitempty" jsonschema:"when the job finished"`
+	ElapsedTime string `json:"elapsed_time,omitempty" jsonschema:"job duration"`
+}
+
+type GetJobOutputArgs struct {
+	JobID int `json:"job_id" jsonschema:"the AWX job ID to get output for"`
+}
+
+type GetJobOutputOutput struct {
+	JobID  int    `json:"job_id" jsonschema:"the job ID"`
+	Output string `json:"output" jsonschema:"the job output/logs"`
+}
+
+type CancelJobArgs struct {
+	JobID int `json:"job_id" jsonschema:"the AWX job ID to cancel"`
+}
+
+type CancelJobOutput struct {
+	JobID   int    `json:"job_id" jsonschema:"the job ID"`
+	Status  string `json:"status" jsonschema:"cancellation status"`
+	Message string `json:"message" jsonschema:"status message"`
+}
+
+type ListResourcesArgs struct {
+	ResourceType string `json:"resource_type" jsonschema:"type of resource (templates, inventories, projects)"`
+}
+
+type ListResourcesOutput struct {
+	ResourceType string        `json:"resource_type" jsonschema:"type of resource"`
+	Resources    []interface{} `json:"resources" jsonschema:"list of resources"`
+	Total        int           `json:"total" jsonschema:"total number of resources"`
+}
+
+type ResourceSummary struct {
+	ID          int    `json:"id" jsonschema:"resource ID"`
+	Name        string `json:"name" jsonschema:"resource name"`
+	Description string `json:"description" jsonschema:"resource description"`
+	Status      string `json:"status,omitempty" jsonschema:"resource status"`
+}

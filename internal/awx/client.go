@@ -313,6 +313,105 @@ func (c *Client) LaunchJob(ctx context.Context, templateID int, request LaunchJo
 	return &response, nil
 }
 
+func (c *Client) GetJobs(ctx context.Context, limit int, status string) ([]Job, error) {
+	var response struct {
+		Count   int   `json:"count"`
+		Results []Job `json:"results"`
+	}
+	
+	endpoint := "/api/v2/jobs/"
+	
+	// Add query parameters
+	params := make([]string, 0)
+	if limit > 0 {
+		params = append(params, fmt.Sprintf("page_size=%d", limit))
+	}
+	if status != "" {
+		params = append(params, fmt.Sprintf("status=%s", status))
+	}
+	
+	if len(params) > 0 {
+		endpoint += "?" + strings.Join(params, "&")
+	}
+	
+	err := c.makeRequest(ctx, "GET", endpoint, nil, &response)
+	if err != nil {
+		return nil, err
+	}
+	return response.Results, nil
+}
+
+func (c *Client) GetJobOutput(ctx context.Context, jobID int) (string, error) {
+	endpoint := fmt.Sprintf("/api/v2/jobs/%d/stdout/", jobID)
+	
+	req, err := http.NewRequestWithContext(ctx, "GET", c.baseURL+endpoint, nil)
+	if err != nil {
+		return "", fmt.Errorf("failed to create request: %w", err)
+	}
+	
+	// Set authentication
+	if c.token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.token)
+	} else if c.username != "" && c.password != "" {
+		req.SetBasicAuth(c.username, c.password)
+	}
+	
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("failed to make request: %w", err)
+	}
+	defer resp.Body.Close()
+	
+	if resp.StatusCode >= 400 {
+		body, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("AWX API error: status %d - %s", resp.StatusCode, string(body))
+	}
+	
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("failed to read response: %w", err)
+	}
+	
+	return string(body), nil
+}
+
+func (c *Client) CancelJob(ctx context.Context, jobID int) error {
+	endpoint := fmt.Sprintf("/api/v2/jobs/%d/cancel/", jobID)
+	
+	err := c.makeRequest(ctx, "POST", endpoint, map[string]interface{}{}, nil)
+	if err != nil {
+		return fmt.Errorf("failed to cancel job: %w", err)
+	}
+	
+	return nil
+}
+
+func (c *Client) GetInventories(ctx context.Context) ([]Inventory, error) {
+	var response struct {
+		Count   int         `json:"count"`
+		Results []Inventory `json:"results"`
+	}
+	
+	err := c.makeRequest(ctx, "GET", "/api/v2/inventories/", nil, &response)
+	if err != nil {
+		return nil, err
+	}
+	return response.Results, nil
+}
+
+func (c *Client) GetProjects(ctx context.Context) ([]Project, error) {
+	var response struct {
+		Count   int       `json:"count"`
+		Results []Project `json:"results"`
+	}
+	
+	err := c.makeRequest(ctx, "GET", "/api/v2/projects/", nil, &response)
+	if err != nil {
+		return nil, err
+	}
+	return response.Results, nil
+}
+
 func (c *Client) LaunchJobByName(ctx context.Context, templateName string, request LaunchJobRequest) (*JobLaunchResponse, error) {
 	template, err := c.GetJobTemplateByName(ctx, templateName)
 	if err != nil {

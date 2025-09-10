@@ -54,3 +54,22 @@ type JobLaunchResponse struct {
 type ErrorResponse struct {
 	Detail string `json:"detail"`
 }
+
+type Inventory struct {
+	ID          int    `json:"id"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	HostCount   int    `json:"total_hosts"`
+	GroupCount  int    `json:"total_groups"`
+	Kind        string `json:"kind"`
+}
+
+type Project struct {
+	ID          int    `json:"id"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Status      string `json:"status"`
+	SCMType     string `json:"scm_type"`
+	SCMURL      string `json:"scm_url"`
+	SCMBranch   string `json:"scm_branch"`
+}

@@ -83,6 +83,27 @@ func (s *MCPServer) registerTools() {
 		Name:        "autoscale",
 		Description: "Manage autoscaling of Autosphere services based on metrics and thresholds",
 	}, s.automationHandler.AutoscaleAutosphere)
+	
+	// New enhanced AWX tools
+	mcp.AddTool(s.server, &mcp.Tool{
+		Name:        "list_awx_jobs",
+		Description: "List AWX jobs with optional filtering by status and limit",
+	}, s.automationHandler.ListAWXJobs)
+	
+	mcp.AddTool(s.server, &mcp.Tool{
+		Name:        "get_job_output",
+		Description: "Get the output/logs of a specific AWX job",
+	}, s.automationHandler.GetAWXJobOutput)
+	
+	mcp.AddTool(s.server, &mcp.Tool{
+		Name:        "cancel_awx_job",
+		Description: "Cancel a running AWX job",
+	}, s.automationHandler.CancelAWXJob)
+	
+	mcp.AddTool(s.server, &mcp.Tool{
+		Name:        "list_awx_resources",
+		Description: "List AWX resources (job templates, inventories, projects)",
+	}, s.automationHandler.ListAWXResources)
 }
 
 func (s *MCPServer) Run(ctx context.Context) error {
@@ -114,12 +135,12 @@ func (s *MCPServer) runSTDIO(ctx context.Context) error {
 }
 
 func (s *MCPServer) logServerInfo() {
-	log.Printf("🚀 Starting Autosphere MCP server...")
-	log.Printf("📡 Server: %s v%s", s.config.ServerName, s.config.Version)
-	log.Printf("🛠️  Basic tools: greet, calculate, get_time")
-	log.Printf("🤖 AWX/Ansible tools: launch_awx_job, check_awx_job, health_check, autoscale")
+	log.Printf("Starting Autosphere MCP server...")
+	log.Printf("Server: %s v%s", s.config.ServerName, s.config.Version)
+	log.Printf("Core AWX tools: launch_awx_job, check_awx_job, health_check, autoscale")
+	log.Printf("Enhanced AWX tools: list_awx_jobs, get_job_output, cancel_awx_job, list_awx_resources")
 	
 	if s.config.EnableDebug {
-		log.Printf("🐛 Debug mode enabled")
+		log.Printf("Debug mode enabled")
 	}
 }

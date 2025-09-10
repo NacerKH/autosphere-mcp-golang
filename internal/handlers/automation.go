@@ -49,3 +49,37 @@ func (h *AutomationHandler) AutoscaleAutosphere(ctx context.Context, req *mcp.Ca
 	}
 	return nil, output, nil
 }
+
+// New handler methods for additional tools
+
+func (h *AutomationHandler) ListAWXJobs(ctx context.Context, req *mcp.CallToolRequest, input models.ListJobsArgs) (*mcp.CallToolResult, models.ListJobsOutput, error) {
+	output, err := h.automationService.ListJobs(ctx, input)
+	if err != nil {
+		return &mcp.CallToolResult{IsError: true}, models.ListJobsOutput{}, err
+	}
+	return nil, output, nil
+}
+
+func (h *AutomationHandler) GetAWXJobOutput(ctx context.Context, req *mcp.CallToolRequest, input models.GetJobOutputArgs) (*mcp.CallToolResult, models.GetJobOutputOutput, error) {
+	output, err := h.automationService.GetJobOutput(ctx, input)
+	if err != nil {
+		return &mcp.CallToolResult{IsError: true}, models.GetJobOutputOutput{}, err
+	}
+	return nil, output, nil
+}
+
+func (h *AutomationHandler) CancelAWXJob(ctx context.Context, req *mcp.CallToolRequest, input models.CancelJobArgs) (*mcp.CallToolResult, models.CancelJobOutput, error) {
+	output, err := h.automationService.CancelJob(ctx, input)
+	if err != nil {
+		return &mcp.CallToolResult{IsError: true}, models.CancelJobOutput{}, err
+	}
+	return nil, output, nil
+}
+
+func (h *AutomationHandler) ListAWXResources(ctx context.Context, req *mcp.CallToolRequest, input models.ListResourcesArgs) (*mcp.CallToolResult, models.ListResourcesOutput, error) {
+	output, err := h.automationService.ListResources(ctx, input)
+	if err != nil {
+		return &mcp.CallToolResult{IsError: true}, models.ListResourcesOutput{}, err
+	}
+	return nil, output, nil
+}

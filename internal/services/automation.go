@@ -267,3 +267,164 @@ func (s *AutomationService) Autoscale(ctx context.Context, args models.Autoscale
 		Status:      status,
 	}, nil
 }
+
+func (s *AutomationService) ListJobs(ctx context.Context, args models.ListJobsArgs) (models.ListJobsOutput, error) {
+	limit := args.Limit
+	if limit <= 0 {
+		limit = 20
+	}
+	
+	log.Printf("Listing AWX jobs (limit: %d, status: %s)", limit, args.Status)
+	
+	jobs, err := s.awxClient.GetJobs(ctx, limit, args.Status)
+	if err != nil {
+		log.Printf("Failed to get AWX jobs: %v", err)
+		return models.ListJobsOutput{}, fmt.Errorf("failed to get jobs: %w", err)
+	}
+	
+	// Convert to job summaries
+	jobSummaries := make([]models.JobSummary, len(jobs))
+	for i, job := range jobs {
+		startedAt := ""
+		finishedAt := ""
+		elapsedTime := ""
+		
+		if job.Started != nil {
+			startedAt = job.Started.Format("2006-01-02 15:04:05")
+			if job.Finished != nil {
+				finishedAt = job.Finished.Format("2006-01-02 15:04:05")
+				elapsedTime = job.Finished.Sub(*job.Started).Round(time.Second).String()
+			} else if job.Status == "running" {
+				elapsedTime = time.Since(*job.Started).Round(time.Second).String()
+			}
+		}
+		
+		jobSummaries[i] = models.JobSummary{
+			ID:          job.ID,
+			Name:        job.Name,
+			Status:      job.Status,
+			Template:    fmt.Sprintf("Template ID: %d", job.JobTemplate),
+			StartedAt:   startedAt,
+			FinishedAt:  finishedAt,
+			ElapsedTime: elapsedTime,
+		}
+	}
+	
+	log.Printf("Retrieved %d jobs", len(jobSummaries))
+	
+	return models.ListJobsOutput{
+		Jobs:  jobSummaries,
+		Total: len(jobSummaries),
+	}, nil
+}
+
+func (s *AutomationService) GetJobOutput(ctx context.Context, args models.GetJobOutputArgs) (models.GetJobOutputOutput, error) {
+	if args.JobID <= 0 {
+		return models.GetJobOutputOutput{}, fmt.Errorf("valid job_id is required")
+	}
+	
+	log.Printf("Getting output for AWX job: %d", args.JobID)
+	
+	output, err := s.awxClient.GetJobOutput(ctx, args.JobID)
+	if err != nil {
+		log.Printf("Failed to get job output: %v", err)
+		return models.GetJobOutputOutput{}, fmt.Errorf("failed to get job output: %w", err)
+	}
+	
+	log.Printf("Retrieved output for job %d (%d characters)", args.JobID, len(output))
+	
+	return models.GetJobOutputOutput{
+		JobID:  args.JobID,
+		Output: output,
+	}, nil
+}
+
+func (s *AutomationService) CancelJob(ctx context.Context, args models.CancelJobArgs) (models.CancelJobOutput, error) {
+	if args.JobID <= 0 {
+		return models.CancelJobOutput{}, fmt.Errorf("valid job_id is required")
+	}
+	
+	log.Printf("Canceling AWX job: %d", args.JobID)
+	
+	err := s.awxClient.CancelJob(ctx, args.JobID)
+	if err != nil {
+		log.Printf("Failed to cancel job: %v", err)
+		return models.CancelJobOutput{}, fmt.Errorf("failed to cancel job: %w", err)
+	}
+	
+	log.Printf("Successfully requested cancellation for job %d", args.JobID)
+	
+	return models.CancelJobOutput{
+		JobID:   args.JobID,
+		Status:  "cancel_requested",
+		Message: fmt.Sprintf("Cancellation requested for job %d", args.JobID),
+	}, nil
+}
+
+func (s *AutomationService) ListResources(ctx context.Context, args models.ListResourcesArgs) (models.ListResourcesOutput, error) {
+	if args.ResourceType == "" {
+		return models.ListResourcesOutput{}, fmt.Errorf("resource_type is required")
+	}
+	
+	log.Printf("Listing AWX resources: %s", args.ResourceType)
+	
+	var resources []interface{}
+	var err error
+	
+	switch strings.ToLower(args.ResourceType) {
+	case "templates", "job_templates":
+		templates, err := s.awxClient.GetJobTemplates(ctx)
+		if err != nil {
+			return models.ListResourcesOutput{}, fmt.Errorf("failed to get job templates: %w", err)
+		}
+		for _, template := range templates {
+			resources = append(resources, models.ResourceSummary{
+				ID:          template.ID,
+				Name:        template.Name,
+				Description: template.Description,
+			})
+		}
+		
+	case "inventories":
+		inventories, err := s.awxClient.GetInventories(ctx)
+		if err != nil {
+			return models.ListResourcesOutput{}, fmt.Errorf("failed to get inventories: %w", err)
+		}
+		for _, inventory := range inventories {
+			resources = append(resources, models.ResourceSummary{
+				ID:          inventory.ID,
+				Name:        inventory.Name,
+				Description: fmt.Sprintf("%s (%d hosts, %d groups)", inventory.Description, inventory.HostCount, inventory.GroupCount),
+			})
+		}
+		
+	case "projects":
+		projects, err := s.awxClient.GetProjects(ctx)
+		if err != nil {
+			return models.ListResourcesOutput{}, fmt.Errorf("failed to get projects: %w", err)
+		}
+		for _, project := range projects {
+			resources = append(resources, models.ResourceSummary{
+				ID:          project.ID,
+				Name:        project.Name,
+				Description: project.Description,
+				Status:      project.Status,
+			})
+		}
+		
+	default:
+		return models.ListResourcesOutput{}, fmt.Errorf("unsupported resource type: %s. Supported types: templates, inventories, projects", args.ResourceType)
+	}
+	
+	if err != nil {
+		return models.ListResourcesOutput{}, err
+	}
+	
+	log.Printf("Retrieved %d %s", len(resources), args.ResourceType)
+	
+	return models.ListResourcesOutput{
+		ResourceType: args.ResourceType,
+		Resources:    resources,
+		Total:        len(resources),
+	}, nil
+}
