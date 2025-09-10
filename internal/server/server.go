@@ -4,7 +4,9 @@ import (
 	"context"
 	"log"
 	"net/http"
+	"time"
 	
+	"github.com/NacerKH/autosphere-mcp-golang/internal/awx"
 	"github.com/NacerKH/autosphere-mcp-golang/internal/config"
 	"github.com/NacerKH/autosphere-mcp-golang/internal/handlers"
 	"github.com/NacerKH/autosphere-mcp-golang/internal/services"
@@ -18,8 +20,29 @@ type MCPServer struct {
 }
 
 func NewMCPServer(cfg *config.Config) *MCPServer {
+	// Create AWX client with longer timeout
+	awxClient := awx.NewClient(awx.ClientConfig{
+		BaseURL:  cfg.AWXBaseURL,
+		Username: cfg.AWXUsername,
+		Password: cfg.AWXPassword,
+		Token:    cfg.AWXToken,
+		Timeout:  120 * time.Second, // Increased to 2 minutes
+	})
+	
+	// Test AWX connection if credentials are provided
+	if cfg.AWXUsername != "" || cfg.AWXToken != "" {
+		if err := awxClient.TestConnection(context.Background()); err != nil {
+			log.Printf("⚠️  AWX connection test failed: %v", err)
+			log.Printf("💡 Server will still start, but AWX operations may fail")
+		} else {
+			log.Printf("✅ AWX connection test successful")
+		}
+	} else {
+		log.Printf("⚠️  No AWX credentials provided. Use -awx-username/-awx-password or -awx-token flags")
+	}
+	
 	healthService := services.NewHealthService()
-	automationService := services.NewAutomationService(healthService, cfg.AWXBaseURL)
+	automationService := services.NewAutomationService(healthService, awxClient, cfg.AWXBaseURL)
 	
 	automationHandler := handlers.NewAutomationHandler(automationService)
 	

@@ -57,6 +57,18 @@ run-http: build
 	@echo "🌐 Running server with HTTP transport on port $(PORT)..."
 	./$(BINARY_NAME) -http localhost:$(PORT)
 
+# Run with AWX integration (STDIO)
+run-awx: build
+	@echo "🤖 Running server with AWX integration (STDIO transport)..."
+	@echo "💡 Make sure to provide AWX credentials via flags or environment variables"
+	./$(BINARY_NAME) -debug
+
+# Run with AWX integration (HTTP)
+run-awx-http: build
+	@echo "🌐 Running server with AWX integration (HTTP transport on port $(PORT))..."
+	@echo "💡 Make sure to provide AWX credentials via flags or environment variables"
+	./$(BINARY_NAME) -http localhost:$(PORT) -debug
+
 # Test build without running
 test-build:
 	@echo "🧪 Testing build..."
@@ -82,17 +94,21 @@ dev-setup: deps
 help:
 	@echo "Autosphere MCP Golang Server - Available Commands:"
 	@echo ""
-	@echo "  make build      - Build the binary"
-	@echo "  make run        - Run with STDIO transport"
-	@echo "  make run-http   - Run with HTTP transport (port 8080)"
-	@echo "  make test       - Run tests"
-	@echo "  make clean      - Clean build artifacts"
-	@echo "  make fmt        - Format code"
-	@echo "  make vet        - Vet code"
-	@echo "  make lint       - Lint code (requires golangci-lint)"
-	@echo "  make deps       - Download dependencies"
-	@echo "  make dev-setup  - Setup development environment"
-	@echo "  make help       - Show this help"
+	@echo "  make build        - Build the binary"
+	@echo "  make run          - Run with STDIO transport"
+	@echo "  make run-http     - Run with HTTP transport (port 8080)"
+	@echo "  make run-awx      - Run with AWX integration (STDIO)"
+	@echo "  make run-awx-http - Run with AWX integration (HTTP)"
+	@echo "  make test         - Run tests"
+	@echo "  make clean        - Clean build artifacts"
+	@echo "  make fmt          - Format code"
+	@echo "  make vet          - Vet code"
+	@echo "  make lint         - Lint code (requires golangci-lint)"
+	@echo "  make deps         - Download dependencies"
+	@echo "  make dev-setup    - Setup development environment"
+	@echo "  make help         - Show this help"
 	@echo ""
 	@echo "Examples:"
-	@echo "  make run-http PORT=3000  - Run HTTP server on port 3000"
+	@echo "  make run-http PORT=3000                                    - Run HTTP server on port 3000"
+	@echo "  ./autosphere-mcp-server -awx-username admin -awx-password pass  - Run with AWX credentials"
+	@echo "  ./autosphere-mcp-server -awx-token your-token -debug           - Run with AWX token"

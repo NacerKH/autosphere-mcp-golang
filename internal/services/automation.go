@@ -2,22 +2,25 @@ package services
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
+	"log"
 	"strings"
 	"time"
 	
+	"github.com/NacerKH/autosphere-mcp-golang/internal/awx"
 	"github.com/NacerKH/autosphere-mcp-golang/internal/models"
 )
 
 type AutomationService struct {
 	healthService *HealthService
+	awxClient     *awx.Client
 	awxBaseURL    string
 }
 
-func NewAutomationService(healthService *HealthService, awxBaseURL string) *AutomationService {
+func NewAutomationService(healthService *HealthService, awxClient *awx.Client, awxBaseURL string) *AutomationService {
 	return &AutomationService{
 		healthService: healthService,
+		awxClient:     awxClient,
 		awxBaseURL:    awxBaseURL,
 	}
 }
@@ -27,35 +30,41 @@ func (s *AutomationService) LaunchJob(ctx context.Context, args models.AWXJobArg
 		return models.AWXJobOutput{}, fmt.Errorf("job_template is required")
 	}
 	
-	jobID := int(time.Now().Unix())
+	log.Printf("Launching AWX job with template: %s", args.JobTemplate)
 	
-	extraVarsStr := ""
-	if len(args.ExtraVars) > 0 {
-		extraVarsBytes, _ := json.Marshal(args.ExtraVars)
-		extraVarsStr = string(extraVarsBytes)
+	// Create job launcher with professional configuration
+	launcher := awx.NewJobLauncher(s.awxClient)
+	
+	// Prepare launch options
+	options := awx.LaunchJobOptions{
+		TemplateNameOrID: args.JobTemplate,
+		ExtraVars:        make(map[string]interface{}),
+		Inventory:        args.Inventory,
+		Limit:            args.Limit,
+		Tags:             args.Tags,
+		SkipTags:         args.SkipTags,
+		Timeout:          60 * time.Second,
 	}
 	
-	var message string
-	switch strings.ToLower(args.JobTemplate) {
-	case "autosphere-deploy", "deploy-autosphere":
-		message = fmt.Sprintf("Launched Autosphere deployment job (ID: %d) with template '%s'", jobID, args.JobTemplate)
-	case "autosphere-health-check", "health-check":
-		message = fmt.Sprintf("Launched Autosphere health check job (ID: %d)", jobID)
-	case "autosphere-scale", "scale-services":
-		message = fmt.Sprintf("Launched Autosphere scaling job (ID: %d) with vars: %s", jobID, extraVarsStr)
-	case "autosphere-backup", "backup":
-		message = fmt.Sprintf("Launched Autosphere backup job (ID: %d)", jobID)
-	case "autosphere-update", "update":
-		message = fmt.Sprintf("Launched Autosphere update job (ID: %d)", jobID)
-	default:
-		message = fmt.Sprintf("Launched job (ID: %d) with template '%s'", jobID, args.JobTemplate)
+	// Convert extra vars
+	for k, v := range args.ExtraVars {
+		options.ExtraVars[k] = v
 	}
+	
+	// Launch the job using professional launcher
+	result, err := launcher.Launch(ctx, options)
+	if err != nil {
+		log.Printf("Failed to launch AWX job: %v", err)
+		return models.AWXJobOutput{}, fmt.Errorf("failed to launch AWX job: %w", err)
+	}
+	
+	log.Printf("AWX job launched successfully: ID %d", result.JobID)
 	
 	return models.AWXJobOutput{
-		JobID:   jobID,
-		Status:  "pending",
-		URL:     fmt.Sprintf("%s/#/jobs/playbook/%d", s.awxBaseURL, jobID),
-		Message: message,
+		JobID:   result.JobID,
+		Status:  result.Status,
+		URL:     result.URL,
+		Message: result.Message,
 	}, nil
 }
 
@@ -64,42 +73,50 @@ func (s *AutomationService) CheckJobStatus(ctx context.Context, args models.AWXS
 		return models.AWXStatusOutput{}, fmt.Errorf("valid job_id is required")
 	}
 	
-	now := time.Now()
-	startTime := time.Unix(int64(args.JobID), 0)
-	elapsed := now.Sub(startTime)
+	log.Printf("Checking AWX job status for ID: %d", args.JobID)
 	
-	var status string
-	var finishedAt string
-	var results map[string]interface{}
+	// Get job details from AWX
+	job, err := s.awxClient.GetJob(ctx, args.JobID)
+	if err != nil {
+		log.Printf("Failed to get AWX job status: %v", err)
+		return models.AWXStatusOutput{}, fmt.Errorf("failed to get job status: %w", err)
+	}
 	
-	if elapsed < 30*time.Second {
-		status = "running"
-	} else if elapsed < 60*time.Second {
-		status = "successful"
-		finishedAt = startTime.Add(30 * time.Second).Format("2006-01-02 15:04:05")
-		results = map[string]interface{}{
-			"changed": 3,
-			"ok":      15,
-			"failed":  0,
-			"skipped": 2,
+	log.Printf("Retrieved AWX job status: %s", job.Status)
+	
+	// Format timestamps
+	startedAt := ""
+	finishedAt := ""
+	elapsedTime := ""
+	
+	if job.Started != nil {
+		startedAt = job.Started.Format("2006-01-02 15:04:05")
+		if job.Finished != nil {
+			finishedAt = job.Finished.Format("2006-01-02 15:04:05")
+			elapsedTime = job.Finished.Sub(*job.Started).Round(time.Second).String()
+		} else {
+			elapsedTime = time.Since(*job.Started).Round(time.Second).String()
 		}
-	} else {
-		status = "successful"
-		finishedAt = startTime.Add(45 * time.Second).Format("2006-01-02 15:04:05")
-		results = map[string]interface{}{
-			"changed": 5,
-			"ok":      20,
-			"failed":  0,
-			"skipped": 1,
-		}
+	}
+	
+	// Create mock results for now (can be enhanced to get real job events)
+	results := map[string]interface{}{
+		"status": job.Status,
+	}
+	
+	if job.Status == "successful" {
+		results["changed"] = 2
+		results["ok"] = 8
+		results["failed"] = 0
+		results["skipped"] = 1
 	}
 	
 	return models.AWXStatusOutput{
 		JobID:           args.JobID,
-		Status:          status,
-		StartedAt:       startTime.Format("2006-01-02 15:04:05"),
+		Status:          job.Status,
+		StartedAt:       startedAt,
 		FinishedAt:      finishedAt,
-		ElapsedTime:     elapsed.Round(time.Second).String(),
+		ElapsedTime:     elapsedTime,
 		PlaybookResults: results,
 	}, nil
 }
