@@ -3,7 +3,7 @@ package interfaces
 import (
 	"context"
 	"github.com/NacerKH/autosphere-mcp-golang/internal/models"
-	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/mark3labs/mcp-go/mcp"
 )
 
 type AutomationService interface {
@@ -26,14 +26,28 @@ type HealthService interface {
 }
 
 type AutomationHandler interface {
-	LaunchAWXJob(ctx context.Context, req *mcp.CallToolRequest, input models.AWXJobArgs) (*mcp.CallToolResult, models.AWXJobOutput, error)
-	CheckAWXJobStatus(ctx context.Context, req *mcp.CallToolRequest, input models.AWXStatusArgs) (*mcp.CallToolResult, models.AWXStatusOutput, error)
-	CheckAutosphereHealth(ctx context.Context, req *mcp.CallToolRequest, input models.HealthCheckArgs) (*mcp.CallToolResult, models.HealthCheckOutput, error)
-	AutoscaleAutosphere(ctx context.Context, req *mcp.CallToolRequest, input models.AutoscaleArgs) (*mcp.CallToolResult, models.AutoscaleOutput, error)
+	LaunchAWXJob(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error)
+	CheckAWXJobStatus(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error)
+	CheckAutosphereHealth(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error)
+	AutoscaleAutosphere(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error)
 	
 	// New handler methods for enhanced AWX functionality
-	ListAWXJobs(ctx context.Context, req *mcp.CallToolRequest, input models.ListJobsArgs) (*mcp.CallToolResult, models.ListJobsOutput, error)
-	GetAWXJobOutput(ctx context.Context, req *mcp.CallToolRequest, input models.GetJobOutputArgs) (*mcp.CallToolResult, models.GetJobOutputOutput, error)
-	CancelAWXJob(ctx context.Context, req *mcp.CallToolRequest, input models.CancelJobArgs) (*mcp.CallToolResult, models.CancelJobOutput, error)
-	ListAWXResources(ctx context.Context, req *mcp.CallToolRequest, input models.ListResourcesArgs) (*mcp.CallToolResult, models.ListResourcesOutput, error)
+	ListAWXJobs(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error)
+	GetAWXJobOutput(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error)
+	CancelAWXJob(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error)
+	ListAWXResources(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error)
+}
+
+// New observability interfaces
+
+type ObservabilityService interface {
+	QueryPrometheus(ctx context.Context, args models.QueryPrometheusArgs) (models.QueryPrometheusOutput, error)
+	GetSystemMetrics(ctx context.Context, args models.GetSystemMetricsArgs) (models.GetSystemMetricsOutput, error)
+	GetAlerts(ctx context.Context, args models.GetAlertsArgs) (models.GetAlertsOutput, error)
+}
+
+type ObservabilityHandler interface {
+	QueryPrometheus(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error)
+	GetSystemMetrics(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error)
+	GetAlerts(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error)
 }

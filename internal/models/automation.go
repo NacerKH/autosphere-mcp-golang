@@ -122,3 +122,65 @@ type ResourceSummary struct {
 	Description string `json:"description" jsonschema:"resource description"`
 	Status      string `json:"status,omitempty" jsonschema:"resource status"`
 }
+
+// Prometheus and observability models
+
+type QueryPrometheusArgs struct {
+	Query     string `json:"query" jsonschema:"PromQL query to execute"`
+	StartTime string `json:"start_time,omitempty" jsonschema:"start time for range queries (RFC3339 format)"`
+	EndTime   string `json:"end_time,omitempty" jsonschema:"end time for range queries (RFC3339 format)"`
+	Step      string `json:"step,omitempty" jsonschema:"step size for range queries (e.g., '5m', '1h')"`
+}
+
+type QueryPrometheusOutput struct {
+	Query       string                 `json:"query" jsonschema:"the executed query"`
+	ResultType  string                 `json:"result_type" jsonschema:"type of result (vector, matrix, scalar)"`
+	Metrics     []PrometheusMetric     `json:"metrics" jsonschema:"list of metric results"`
+	Summary     string                 `json:"summary" jsonschema:"human-readable summary of results"`
+	QueryTime   string                 `json:"query_time" jsonschema:"when the query was executed"`
+}
+
+type PrometheusMetric struct {
+	Labels map[string]string `json:"labels" jsonschema:"metric labels"`
+	Value  string            `json:"value" jsonschema:"metric value"`
+	Time   string            `json:"time" jsonschema:"timestamp of the value"`
+}
+
+type GetSystemMetricsArgs struct {
+	TimeRange string `json:"time_range,omitempty" jsonschema:"time range for metrics (5m, 1h, 24h)"`
+	Nodes     string `json:"nodes,omitempty" jsonschema:"specific nodes to query (comma-separated)"`
+}
+
+type GetSystemMetricsOutput struct {
+	OverallHealth string                    `json:"overall_health" jsonschema:"overall system health status"`
+	Metrics       map[string]float64        `json:"metrics" jsonschema:"key system metrics"`
+	NodeMetrics   map[string]map[string]float64 `json:"node_metrics,omitempty" jsonschema:"per-node metrics"`
+	Alerts        []string                  `json:"alerts,omitempty" jsonschema:"active alerts"`
+	Timestamp     string                    `json:"timestamp" jsonschema:"when metrics were collected"`
+	Recommendations []string                `json:"recommendations,omitempty" jsonschema:"optimization recommendations"`
+}
+
+type GetAlertsArgs struct {
+	Severity string `json:"severity,omitempty" jsonschema:"filter by alert severity (critical, warning, info)"`
+	Service  string `json:"service,omitempty" jsonschema:"filter by service name"`
+	Active   *bool  `json:"active,omitempty" jsonschema:"filter by active status"`
+}
+
+type GetAlertsOutput struct {
+	ActiveAlerts []AlertSummary `json:"active_alerts" jsonschema:"currently active alerts"`
+	TotalAlerts  int           `json:"total_alerts" jsonschema:"total number of alerts"`
+	Critical     int           `json:"critical_count" jsonschema:"number of critical alerts"`
+	Warning      int           `json:"warning_count" jsonschema:"number of warning alerts"`
+	Summary      string        `json:"summary" jsonschema:"overall alert status summary"`
+	Timestamp    string        `json:"timestamp" jsonschema:"when alerts were retrieved"`
+}
+
+type AlertSummary struct {
+	Name        string            `json:"name" jsonschema:"alert name"`
+	Severity    string            `json:"severity" jsonschema:"alert severity"`
+	Status      string            `json:"status" jsonschema:"alert status"`
+	Labels      map[string]string `json:"labels" jsonschema:"alert labels"`
+	Annotations map[string]string `json:"annotations" jsonschema:"alert annotations"`
+	ActiveSince string            `json:"active_since,omitempty" jsonschema:"how long the alert has been active"`
+	Value       string            `json:"value,omitempty" jsonschema:"current metric value"`
+}
