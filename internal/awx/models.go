@@ -73,3 +73,13 @@ type Project struct {
 	SCMURL      string `json:"scm_url"`
 	SCMBranch   string `json:"scm_branch"`
 }
+
+type CreateJobTemplateRequest struct {
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+	JobType     string `json:"job_type"`
+	Inventory   int    `json:"inventory"`
+	Project     int    `json:"project"`
+	Playbook    string `json:"playbook"`
+	Verbosity   int    `json:"verbosity,omitempty"`
+}

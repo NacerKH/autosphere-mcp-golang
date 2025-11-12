@@ -436,13 +436,26 @@ func (c *Client) GetJob(ctx context.Context, jobID int) (*Job, error) {
 
 func (c *Client) TestConnection(ctx context.Context) error {
 	log.Printf(" Testing AWX connection to %s", c.baseURL)
-	
+
 	// Try to get job templates as a connection test
 	_, err := c.GetJobTemplates(ctx)
 	if err != nil {
 		return fmt.Errorf("AWX connection test failed: %w", err)
 	}
-	
+
 	log.Printf(" AWX connection test successful")
 	return nil
+}
+
+func (c *Client) CreateJobTemplate(ctx context.Context, request CreateJobTemplateRequest) (*JobTemplate, error) {
+	var template JobTemplate
+	endpoint := "/api/v2/job_templates/"
+
+	err := c.makeRequest(ctx, "POST", endpoint, request, &template)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create job template: %w", err)
+	}
+
+	log.Printf("Successfully created job template: %s (ID: %d)", template.Name, template.ID)
+	return &template, nil
 }

@@ -11,12 +11,16 @@ type AutomationService interface {
 	CheckJobStatus(ctx context.Context, args models.AWXStatusArgs) (models.AWXStatusOutput, error)
 	CheckHealth(ctx context.Context, args models.HealthCheckArgs) (models.HealthCheckOutput, error)
 	Autoscale(ctx context.Context, args models.AutoscaleArgs) (models.AutoscaleOutput, error)
-	
+
 	// New methods for enhanced AWX functionality
 	ListJobs(ctx context.Context, args models.ListJobsArgs) (models.ListJobsOutput, error)
 	GetJobOutput(ctx context.Context, args models.GetJobOutputArgs) (models.GetJobOutputOutput, error)
 	CancelJob(ctx context.Context, args models.CancelJobArgs) (models.CancelJobOutput, error)
 	ListResources(ctx context.Context, args models.ListResourcesArgs) (models.ListResourcesOutput, error)
+
+	// Job Template management
+	ListJobTemplates(ctx context.Context, args models.ListJobTemplatesArgs) (models.ListJobTemplatesOutput, error)
+	CreateJobTemplate(ctx context.Context, args models.CreateJobTemplateArgs) (models.CreateJobTemplateOutput, error)
 }
 
 type HealthService interface {
@@ -30,12 +34,16 @@ type AutomationHandler interface {
 	CheckAWXJobStatus(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error)
 	CheckAutosphereHealth(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error)
 	AutoscaleAutosphere(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error)
-	
+
 	// New handler methods for enhanced AWX functionality
 	ListAWXJobs(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error)
 	GetAWXJobOutput(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error)
 	CancelAWXJob(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error)
 	ListAWXResources(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error)
+
+	// Job Template management handlers
+	ListJobTemplates(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error)
+	CreateJobTemplate(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error)
 }
 
 // New observability interfaces

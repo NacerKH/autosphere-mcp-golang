@@ -142,6 +142,25 @@ func (s *MCPServer) registerTools() {
 		mcp.WithString("resource_type", mcp.Required(), mcp.Description("Type of resource (templates, inventories, projects)")),
 	)
 	s.server.AddTool(listResourcesTool, s.automationHandler.ListAWXResources)
+
+	// List Job Templates Tool
+	listJobTemplates := mcp.NewTool("list_job_templates",
+		mcp.WithDescription("List all AWX job templates with details"),
+	)
+	s.server.AddTool(listJobTemplates, s.automationHandler.ListJobTemplates)
+
+	// Create Job Template Tool
+	createJobTemplate := mcp.NewTool("create_job_template",
+		mcp.WithDescription("Create a new AWX job template"),
+		mcp.WithString("name", mcp.Required(), mcp.Description("Template name")),
+		mcp.WithString("inventory", mcp.Required(), mcp.Description("Inventory ID (integer)")),
+		mcp.WithString("project", mcp.Required(), mcp.Description("Project ID (integer)")),
+		mcp.WithString("playbook", mcp.Required(), mcp.Description("Playbook path (e.g., site.yml, deploy.yml)")),
+		mcp.WithString("description", mcp.Description("Template description (optional)")),
+		mcp.WithString("job_type", mcp.Description("Job type: run or check (default: run)")),
+		mcp.WithString("verbosity", mcp.Description("Playbook verbosity level 0-5 (default: 0)")),
+	)
+	s.server.AddTool(createJobTemplate, s.automationHandler.CreateJobTemplate)
 }
 
 func (s *MCPServer) registerResources() {
@@ -238,9 +257,10 @@ func (s *MCPServer) logServerInfo() {
 	log.Printf("Server: %s v%s", s.config.ServerName, s.config.Version)
 	log.Printf("Core AWX tools: launch_awx_job, check_awx_job, health_check, autoscale")
 	log.Printf("Enhanced AWX tools: list_awx_jobs, get_job_output, cancel_awx_job, list_awx_resources")
+	log.Printf("Template management: list_job_templates, create_job_template")
 	log.Printf("Resources: autosphere://config, autosphere://deployment-manifest, autosphere://health-report, autosphere://awx-templates")
 	log.Printf("Prompts: deployment_planning, troubleshooting, scaling_decision, incident_response")
-	
+
 	if s.config.EnableDebug {
 		log.Printf("Debug mode enabled")
 	}

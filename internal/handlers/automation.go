@@ -409,10 +409,109 @@ func (h *AutomationHandler) ListAWXResources(ctx context.Context, request mcp.Ca
 			message += fmt.Sprintf("- **%s** (ID: %d)\n", name, id)
 		}
 	}
-	
+
 	// Add full JSON response
 	resultJSON, _ := json.MarshalIndent(output, "", "  ")
 	message += fmt.Sprintf("\n**Full Response:**\n```json\n%s\n```", string(resultJSON))
-	
+
+	return mcp.NewToolResultText(message), nil
+}
+
+// ListJobTemplates lists all AWX job templates
+func (h *AutomationHandler) ListJobTemplates(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	args := models.ListJobTemplatesArgs{}
+
+	// Call the automation service
+	output, err := h.automationService.ListJobTemplates(ctx, args)
+	if err != nil {
+		log.Printf("List job templates failed: %v", err)
+		return mcp.NewToolResultError(fmt.Sprintf("Failed to list job templates: %v", err)), nil
+	}
+
+	// Format template list response
+	message := fmt.Sprintf("🔧 AWX Job Templates\n\n**Found %d job templates:**\n\n", output.Total)
+
+	for _, template := range output.Templates {
+		message += fmt.Sprintf("**%s** (ID: %d)\n", template.Name, template.ID)
+		if template.Description != "" {
+			message += fmt.Sprintf("   - Description: %s\n", template.Description)
+		}
+		message += fmt.Sprintf("   - Playbook: %s\n", template.Playbook)
+		message += fmt.Sprintf("   - Project ID: %d\n", template.Project)
+		message += fmt.Sprintf("   - Inventory ID: %d\n", template.Inventory)
+		message += "\n"
+	}
+
+	// Add full JSON response
+	resultJSON, _ := json.MarshalIndent(output, "", "  ")
+	message += fmt.Sprintf("**Full Response:**\n```json\n%s\n```", string(resultJSON))
+
+	return mcp.NewToolResultText(message), nil
+}
+
+// CreateJobTemplate creates a new AWX job template
+func (h *AutomationHandler) CreateJobTemplate(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	args := models.CreateJobTemplateArgs{}
+
+	// Required: name
+	name, err := request.RequireString("name")
+	if err != nil {
+		return mcp.NewToolResultError("name is required"), nil
+	}
+	args.Name = name
+
+	// Required: inventory (as integer)
+	inventoryStr, err := request.RequireString("inventory")
+	if err != nil {
+		return mcp.NewToolResultError("inventory ID is required"), nil
+	}
+	if inventory, err := strconv.Atoi(inventoryStr); err == nil {
+		args.Inventory = inventory
+	} else {
+		return mcp.NewToolResultError("inventory must be a valid integer ID"), nil
+	}
+
+	// Required: project (as integer)
+	projectStr, err := request.RequireString("project")
+	if err != nil {
+		return mcp.NewToolResultError("project ID is required"), nil
+	}
+	if project, err := strconv.Atoi(projectStr); err == nil {
+		args.Project = project
+	} else {
+		return mcp.NewToolResultError("project must be a valid integer ID"), nil
+	}
+
+	// Required: playbook
+	playbook, err := request.RequireString("playbook")
+	if err != nil {
+		return mcp.NewToolResultError("playbook path is required"), nil
+	}
+	args.Playbook = playbook
+
+	// Optional parameters
+	args.Description = request.GetString("description", "")
+	args.JobType = request.GetString("job_type", "run")
+
+	verbosityStr := request.GetString("verbosity", "0")
+	if verbosity, err := strconv.Atoi(verbosityStr); err == nil {
+		args.Verbosity = verbosity
+	}
+
+	// Call the automation service
+	output, err := h.automationService.CreateJobTemplate(ctx, args)
+	if err != nil {
+		log.Printf("Create job template failed: %v", err)
+		return mcp.NewToolResultError(fmt.Sprintf("Failed to create job template: %v", err)), nil
+	}
+
+	// Format creation response
+	message := fmt.Sprintf("✅ Job Template Created Successfully\n\n**Template Details:**\n- ID: %d\n- Name: %s\n- Description: %s\n- Status: %s\n\n**Message:** %s\n",
+		output.ID, output.Name, output.Description, output.Status, output.Message)
+
+	// Add full JSON response
+	resultJSON, _ := json.MarshalIndent(output, "", "  ")
+	message += fmt.Sprintf("\n**Full Response:**\n```json\n%s\n```", string(resultJSON))
+
 	return mcp.NewToolResultText(message), nil
 }

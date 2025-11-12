@@ -184,3 +184,41 @@ type AlertSummary struct {
 	ActiveSince string            `json:"active_since,omitempty" jsonschema:"how long the alert has been active"`
 	Value       string            `json:"value,omitempty" jsonschema:"current metric value"`
 }
+
+// Job Template models
+
+type ListJobTemplatesArgs struct {
+	// No arguments needed for simple list
+}
+
+type ListJobTemplatesOutput struct {
+	Templates []JobTemplateSummary `json:"templates" jsonschema:"list of job templates"`
+	Total     int                  `json:"total" jsonschema:"total number of templates"`
+}
+
+type JobTemplateSummary struct {
+	ID          int    `json:"id" jsonschema:"template ID"`
+	Name        string `json:"name" jsonschema:"template name"`
+	Description string `json:"description" jsonschema:"template description"`
+	Playbook    string `json:"playbook" jsonschema:"playbook path"`
+	Inventory   int    `json:"inventory" jsonschema:"inventory ID"`
+	Project     int    `json:"project" jsonschema:"project ID"`
+}
+
+type CreateJobTemplateArgs struct {
+	Name        string `json:"name" jsonschema:"required,template name"`
+	Description string `json:"description,omitempty" jsonschema:"template description"`
+	JobType     string `json:"job_type,omitempty" jsonschema:"job type (default: run)"`
+	Inventory   int    `json:"inventory" jsonschema:"required,inventory ID"`
+	Project     int    `json:"project" jsonschema:"required,project ID"`
+	Playbook    string `json:"playbook" jsonschema:"required,playbook path (e.g., site.yml)"`
+	Verbosity   int    `json:"verbosity,omitempty" jsonschema:"playbook verbosity (0-5)"`
+}
+
+type CreateJobTemplateOutput struct {
+	ID          int    `json:"id" jsonschema:"created template ID"`
+	Name        string `json:"name" jsonschema:"template name"`
+	Description string `json:"description" jsonschema:"template description"`
+	Status      string `json:"status" jsonschema:"creation status"`
+	Message     string `json:"message" jsonschema:"status message"`
+}

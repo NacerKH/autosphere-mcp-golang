@@ -428,3 +428,84 @@ func (s *AutomationService) ListResources(ctx context.Context, args models.ListR
 		Total:        len(resources),
 	}, nil
 }
+
+func (s *AutomationService) ListJobTemplates(ctx context.Context, args models.ListJobTemplatesArgs) (models.ListJobTemplatesOutput, error) {
+	log.Printf("Listing AWX job templates")
+
+	templates, err := s.awxClient.GetJobTemplates(ctx)
+	if err != nil {
+		log.Printf("Failed to get job templates: %v", err)
+		return models.ListJobTemplatesOutput{}, fmt.Errorf("failed to get job templates: %w", err)
+	}
+
+	// Convert to template summaries
+	templateSummaries := make([]models.JobTemplateSummary, len(templates))
+	for i, template := range templates {
+		templateSummaries[i] = models.JobTemplateSummary{
+			ID:          template.ID,
+			Name:        template.Name,
+			Description: template.Description,
+			Playbook:    template.Playbook,
+			Inventory:   template.Inventory,
+			Project:     template.Project,
+		}
+	}
+
+	log.Printf("Retrieved %d job templates", len(templateSummaries))
+
+	return models.ListJobTemplatesOutput{
+		Templates: templateSummaries,
+		Total:     len(templateSummaries),
+	}, nil
+}
+
+func (s *AutomationService) CreateJobTemplate(ctx context.Context, args models.CreateJobTemplateArgs) (models.CreateJobTemplateOutput, error) {
+	// Validate required fields
+	if args.Name == "" {
+		return models.CreateJobTemplateOutput{}, fmt.Errorf("template name is required")
+	}
+	if args.Inventory == 0 {
+		return models.CreateJobTemplateOutput{}, fmt.Errorf("inventory ID is required")
+	}
+	if args.Project == 0 {
+		return models.CreateJobTemplateOutput{}, fmt.Errorf("project ID is required")
+	}
+	if args.Playbook == "" {
+		return models.CreateJobTemplateOutput{}, fmt.Errorf("playbook path is required")
+	}
+
+	// Set default job type if not specified
+	jobType := args.JobType
+	if jobType == "" {
+		jobType = "run"
+	}
+
+	log.Printf("Creating AWX job template: %s", args.Name)
+
+	// Create the template using AWX client
+	request := awx.CreateJobTemplateRequest{
+		Name:        args.Name,
+		Description: args.Description,
+		JobType:     jobType,
+		Inventory:   args.Inventory,
+		Project:     args.Project,
+		Playbook:    args.Playbook,
+		Verbosity:   args.Verbosity,
+	}
+
+	template, err := s.awxClient.CreateJobTemplate(ctx, request)
+	if err != nil {
+		log.Printf("Failed to create job template: %v", err)
+		return models.CreateJobTemplateOutput{}, fmt.Errorf("failed to create job template: %w", err)
+	}
+
+	log.Printf("Successfully created job template: %s (ID: %d)", template.Name, template.ID)
+
+	return models.CreateJobTemplateOutput{
+		ID:          template.ID,
+		Name:        template.Name,
+		Description: template.Description,
+		Status:      "created",
+		Message:     fmt.Sprintf("Job template '%s' created successfully with ID %d", template.Name, template.ID),
+	}, nil
+}
