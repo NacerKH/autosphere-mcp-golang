@@ -222,3 +222,25 @@ type CreateJobTemplateOutput struct {
 	Status      string `json:"status" jsonschema:"creation status"`
 	Message     string `json:"message" jsonschema:"status message"`
 }
+
+// Cache statistics models
+
+type GetCacheStatsArgs struct {
+	// No arguments needed
+}
+
+type GetCacheStatsOutput struct {
+	AWXCache        CacheStatsDetail `json:"awx_cache" jsonschema:"AWX client cache statistics"`
+	PrometheusCache CacheStatsDetail `json:"prometheus_cache,omitempty" jsonschema:"Prometheus client cache statistics"`
+	Summary         string           `json:"summary" jsonschema:"human-readable summary"`
+	Timestamp       string           `json:"timestamp" jsonschema:"when statistics were collected"`
+}
+
+type CacheStatsDetail struct {
+	Hits        int64   `json:"hits" jsonschema:"cache hits"`
+	Misses      int64   `json:"misses" jsonschema:"cache misses"`
+	Sets        int64   `json:"sets" jsonschema:"cache sets"`
+	Evictions   int64   `json:"evictions" jsonschema:"cache evictions"`
+	CurrentSize int     `json:"current_size" jsonschema:"current number of cached items"`
+	HitRate     float64 `json:"hit_rate" jsonschema:"cache hit rate percentage"`
+}

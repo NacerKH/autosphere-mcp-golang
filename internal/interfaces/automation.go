@@ -21,6 +21,9 @@ type AutomationService interface {
 	// Job Template management
 	ListJobTemplates(ctx context.Context, args models.ListJobTemplatesArgs) (models.ListJobTemplatesOutput, error)
 	CreateJobTemplate(ctx context.Context, args models.CreateJobTemplateArgs) (models.CreateJobTemplateOutput, error)
+
+	// Cache management
+	GetCacheStats(ctx context.Context, args models.GetCacheStatsArgs) (models.GetCacheStatsOutput, error)
 }
 
 type HealthService interface {
@@ -44,6 +47,9 @@ type AutomationHandler interface {
 	// Job Template management handlers
 	ListJobTemplates(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error)
 	CreateJobTemplate(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error)
+
+	// Cache management handlers
+	GetCacheStats(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error)
 }
 
 // New observability interfaces

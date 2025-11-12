@@ -2,13 +2,18 @@ package prometheus
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"strconv"
 	"time"
+
+	"github.com/NacerKH/autosphere-mcp-golang/internal/cache"
 )
 
 // PrometheusClient handles interactions with Prometheus API
@@ -17,6 +22,8 @@ type PrometheusClient struct {
 	httpClient *http.Client
 	username   string
 	password   string
+	cache      *cache.Cache
+	debug      bool
 }
 
 // PrometheusConfig contains configuration for Prometheus client
@@ -25,6 +32,7 @@ type PrometheusConfig struct {
 	Username string
 	Password string
 	Timeout  time.Duration
+	Debug    bool
 }
 
 // NewPrometheusClient creates a new Prometheus client
@@ -33,13 +41,26 @@ func NewPrometheusClient(config PrometheusConfig) *PrometheusClient {
 		config.Timeout = 30 * time.Second
 	}
 
+	// Configure HTTP transport with connection pooling for better performance
+	transport := &http.Transport{
+		MaxIdleConns:        100,              // Maximum idle connections across all hosts
+		MaxIdleConnsPerHost: 10,               // Maximum idle connections per host
+		IdleConnTimeout:     90 * time.Second, // How long idle connections are kept
+		DisableCompression:  false,            // Enable compression
+		DisableKeepAlives:   false,            // Enable keep-alives for connection reuse
+		ForceAttemptHTTP2:   true,             // Attempt HTTP/2
+	}
+
 	return &PrometheusClient{
 		baseURL: config.BaseURL,
 		httpClient: &http.Client{
-			Timeout: config.Timeout,
+			Timeout:   config.Timeout,
+			Transport: transport,
 		},
 		username: config.Username,
 		password: config.Password,
+		cache:    cache.NewCache(),
+		debug:    config.Debug,
 	}
 }
 
@@ -61,13 +82,44 @@ type Result struct {
 	Values [][]interface{}   `json:"values,omitempty"`
 }
 
-// Query executes a PromQL query
+// Query executes a PromQL query with caching
 func (c *PrometheusClient) Query(ctx context.Context, query string) (*QueryResponse, error) {
+	// Create cache key from query
+	cacheKey := c.getCacheKey(query)
+
+	// Try cache first
+	if cached, ok := c.cache.Get(cacheKey); ok {
+		if resp, ok := cached.(*QueryResponse); ok {
+			if c.debug {
+				log.Printf("Cache HIT: Prometheus query: %s", query)
+			}
+			return resp, nil
+		}
+	}
+
+	if c.debug {
+		log.Printf("Cache MISS: Prometheus query - fetching from Prometheus")
+	}
+
 	params := url.Values{}
 	params.Set("query", query)
 	params.Set("time", strconv.FormatInt(time.Now().Unix(), 10))
 
-	return c.makeRequest(ctx, "/api/v1/query", params)
+	resp, err := c.makeRequest(ctx, "/api/v1/query", params)
+	if err != nil {
+		return nil, err
+	}
+
+	// Cache for 30 seconds (metrics change frequently)
+	c.cache.Set(cacheKey, resp, 30*time.Second)
+
+	return resp, nil
+}
+
+// getCacheKey generates a cache key from query
+func (c *PrometheusClient) getCacheKey(query string) string {
+	hash := sha256.Sum256([]byte(query))
+	return "prom:query:" + hex.EncodeToString(hash[:8])
 }
 
 // QueryRange executes a PromQL range query
@@ -120,8 +172,25 @@ func (c *PrometheusClient) makeRequest(ctx context.Context, endpoint string, par
 	return &queryResp, nil
 }
 
-// GetSystemMetrics retrieves common system metrics
+// GetSystemMetrics retrieves common system metrics with caching
 func (c *PrometheusClient) GetSystemMetrics(ctx context.Context) (map[string]float64, error) {
+	// Cache key for system metrics
+	cacheKey := "prom:system_metrics"
+
+	// Try cache first
+	if cached, ok := c.cache.Get(cacheKey); ok {
+		if metrics, ok := cached.(map[string]float64); ok {
+			if c.debug {
+				log.Printf("Cache HIT: system metrics")
+			}
+			return metrics, nil
+		}
+	}
+
+	if c.debug {
+		log.Printf("Cache MISS: system metrics - fetching from Prometheus")
+	}
+
 	metrics := make(map[string]float64)
 
 	// CPU usage
@@ -151,5 +220,18 @@ func (c *PrometheusClient) GetSystemMetrics(ctx context.Context) (map[string]flo
 		}
 	}
 
+	// Cache for 30 seconds
+	c.cache.Set(cacheKey, metrics, 30*time.Second)
+
 	return metrics, nil
+}
+
+// ClearCache clears all cached data
+func (c *PrometheusClient) ClearCache() {
+	c.cache.Clear()
+}
+
+// GetCacheStats returns cache statistics
+func (c *PrometheusClient) GetCacheStats() cache.CacheStats {
+	return c.cache.GetStats()
 }

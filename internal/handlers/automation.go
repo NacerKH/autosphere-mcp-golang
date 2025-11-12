@@ -6,7 +6,8 @@ import (
 	"fmt"
 	"log"
 	"strconv"
-	
+	"strings"
+
 	"github.com/NacerKH/autosphere-mcp-golang/internal/interfaces"
 	"github.com/NacerKH/autosphere-mcp-golang/internal/models"
 	"github.com/mark3labs/mcp-go/mcp"
@@ -256,9 +257,10 @@ func (h *AutomationHandler) ListAWXJobs(ctx context.Context, request mcp.CallToo
 		return mcp.NewToolResultError(fmt.Sprintf("Failed to list AWX jobs: %v", err)), nil
 	}
 	
-	// Format job list response
-	message := fmt.Sprintf("📋 AWX Jobs List\n\n**Found %d jobs (showing %d):**\n\n", output.Total, len(output.Jobs))
-	
+	// Use strings.Builder for efficient string concatenation
+	var builder strings.Builder
+	builder.WriteString(fmt.Sprintf("📋 AWX Jobs List\n\n**Found %d jobs (showing %d):**\n\n", output.Total, len(output.Jobs)))
+
 	for _, job := range output.Jobs {
 		statusEmoji := "🔄"
 		switch job.Status {
@@ -271,19 +273,20 @@ func (h *AutomationHandler) ListAWXJobs(ctx context.Context, request mcp.CallToo
 		case "pending":
 			statusEmoji = "⏳"
 		}
-		
-		message += fmt.Sprintf("%s **Job %d**: %s\n", statusEmoji, job.ID, job.Name)
-		message += fmt.Sprintf("   - Template: %s\n", job.Template)
-		message += fmt.Sprintf("   - Status: %s\n", job.Status)
+
+		builder.WriteString(fmt.Sprintf("%s **Job %d**: %s\n", statusEmoji, job.ID, job.Name))
+		builder.WriteString(fmt.Sprintf("   - Template: %s\n", job.Template))
+		builder.WriteString(fmt.Sprintf("   - Status: %s\n", job.Status))
 		if job.ElapsedTime != "" {
-			message += fmt.Sprintf("   - Duration: %s\n", job.ElapsedTime)
+			builder.WriteString(fmt.Sprintf("   - Duration: %s\n", job.ElapsedTime))
 		}
-		message += "\n"
+		builder.WriteString("\n")
 	}
-	
+
 	// Add full JSON response
 	resultJSON, _ := json.MarshalIndent(output, "", "  ")
-	message += fmt.Sprintf("**Full Response:**\n```json\n%s\n```", string(resultJSON))
+	builder.WriteString(fmt.Sprintf("**Full Response:**\n```json\n%s\n```", string(resultJSON)))
+	message := builder.String()
 	
 	return mcp.NewToolResultText(message), nil
 }
@@ -428,23 +431,25 @@ func (h *AutomationHandler) ListJobTemplates(ctx context.Context, request mcp.Ca
 		return mcp.NewToolResultError(fmt.Sprintf("Failed to list job templates: %v", err)), nil
 	}
 
-	// Format template list response
-	message := fmt.Sprintf("🔧 AWX Job Templates\n\n**Found %d job templates:**\n\n", output.Total)
+	// Use strings.Builder for efficient string concatenation
+	var builder strings.Builder
+	builder.WriteString(fmt.Sprintf("🔧 AWX Job Templates\n\n**Found %d job templates:**\n\n", output.Total))
 
 	for _, template := range output.Templates {
-		message += fmt.Sprintf("**%s** (ID: %d)\n", template.Name, template.ID)
+		builder.WriteString(fmt.Sprintf("**%s** (ID: %d)\n", template.Name, template.ID))
 		if template.Description != "" {
-			message += fmt.Sprintf("   - Description: %s\n", template.Description)
+			builder.WriteString(fmt.Sprintf("   - Description: %s\n", template.Description))
 		}
-		message += fmt.Sprintf("   - Playbook: %s\n", template.Playbook)
-		message += fmt.Sprintf("   - Project ID: %d\n", template.Project)
-		message += fmt.Sprintf("   - Inventory ID: %d\n", template.Inventory)
-		message += "\n"
+		builder.WriteString(fmt.Sprintf("   - Playbook: %s\n", template.Playbook))
+		builder.WriteString(fmt.Sprintf("   - Project ID: %d\n", template.Project))
+		builder.WriteString(fmt.Sprintf("   - Inventory ID: %d\n", template.Inventory))
+		builder.WriteString("\n")
 	}
 
 	// Add full JSON response
 	resultJSON, _ := json.MarshalIndent(output, "", "  ")
-	message += fmt.Sprintf("**Full Response:**\n```json\n%s\n```", string(resultJSON))
+	builder.WriteString(fmt.Sprintf("**Full Response:**\n```json\n%s\n```", string(resultJSON)))
+	message := builder.String()
 
 	return mcp.NewToolResultText(message), nil
 }
@@ -514,4 +519,56 @@ func (h *AutomationHandler) CreateJobTemplate(ctx context.Context, request mcp.C
 	message += fmt.Sprintf("\n**Full Response:**\n```json\n%s\n```", string(resultJSON))
 
 	return mcp.NewToolResultText(message), nil
+}
+
+// GetCacheStats retrieves cache statistics
+func (h *AutomationHandler) GetCacheStats(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	args := models.GetCacheStatsArgs{}
+
+	// Call the automation service
+	output, err := h.automationService.GetCacheStats(ctx, args)
+	if err != nil {
+		log.Printf("Get cache stats failed: %v", err)
+		return mcp.NewToolResultError(fmt.Sprintf("Failed to get cache stats: %v", err)), nil
+	}
+
+	// Format cache stats response
+	var builder strings.Builder
+	builder.WriteString("📊 Cache Performance Statistics\n\n")
+	builder.WriteString(fmt.Sprintf("**%s**\n\n", output.Summary))
+
+	builder.WriteString("**AWX Client Cache:**\n")
+	builder.WriteString(fmt.Sprintf("  • Hits: %d\n", output.AWXCache.Hits))
+	builder.WriteString(fmt.Sprintf("  • Misses: %d\n", output.AWXCache.Misses))
+	builder.WriteString(fmt.Sprintf("  • Hit Rate: %.1f%%\n", output.AWXCache.HitRate))
+	builder.WriteString(fmt.Sprintf("  • Cached Items: %d\n", output.AWXCache.CurrentSize))
+	builder.WriteString(fmt.Sprintf("  • Total Sets: %d\n", output.AWXCache.Sets))
+	builder.WriteString(fmt.Sprintf("  • Evictions: %d\n", output.AWXCache.Evictions))
+
+	// Performance interpretation
+	builder.WriteString("\n**Performance Impact:**\n")
+	if output.AWXCache.HitRate >= 70 {
+		builder.WriteString("  ✅ Excellent cache performance - 70%+ of requests served from cache\n")
+	} else if output.AWXCache.HitRate >= 50 {
+		builder.WriteString("  ⚠️  Good cache performance - consider increasing TTL for better results\n")
+	} else if output.AWXCache.HitRate >= 30 {
+		builder.WriteString("  ⚠️  Moderate cache performance - review caching strategy\n")
+	} else {
+		builder.WriteString("  ❌ Low cache performance - cache warming may be needed\n")
+	}
+
+	totalRequests := output.AWXCache.Hits + output.AWXCache.Misses
+	if totalRequests > 0 {
+		savedRequests := output.AWXCache.Hits
+		builder.WriteString(fmt.Sprintf("  • Backend requests saved: %d (%.1f%% reduction)\n",
+			savedRequests, float64(savedRequests)/float64(totalRequests)*100))
+	}
+
+	builder.WriteString(fmt.Sprintf("\n📅 **Collected at:** %s\n", output.Timestamp))
+
+	// Add full JSON response
+	resultJSON, _ := json.MarshalIndent(output, "", "  ")
+	builder.WriteString(fmt.Sprintf("\n**Full Response:**\n```json\n%s\n```", string(resultJSON)))
+
+	return mcp.NewToolResultText(builder.String()), nil
 }

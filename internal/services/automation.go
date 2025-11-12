@@ -504,8 +504,37 @@ func (s *AutomationService) CreateJobTemplate(ctx context.Context, args models.C
 	return models.CreateJobTemplateOutput{
 		ID:          template.ID,
 		Name:        template.Name,
-		Description: template.Description,
+		Description:template.Description,
 		Status:      "created",
 		Message:     fmt.Sprintf("Job template '%s' created successfully with ID %d", template.Name, template.ID),
+	}, nil
+}
+
+func (s *AutomationService) GetCacheStats(ctx context.Context, args models.GetCacheStatsArgs) (models.GetCacheStatsOutput, error) {
+	log.Printf("Retrieving cache statistics")
+
+	// Get AWX cache stats
+	awxStats := s.awxClient.GetCacheStats()
+
+	// Convert to detail format
+	awxDetail := models.CacheStatsDetail{
+		Hits:        awxStats.Hits,
+		Misses:      awxStats.Misses,
+		Sets:        awxStats.Sets,
+		Evictions:   awxStats.Evictions,
+		CurrentSize: awxStats.CurrentSize,
+		HitRate:     awxStats.HitRate,
+	}
+
+	// Create summary
+	timestamp := time.Now().Format("2006-01-02 15:04:05")
+	totalRequests := awxStats.Hits + awxStats.Misses
+	summary := fmt.Sprintf("AWX Cache: %d items, %.1f%% hit rate (%d hits / %d total requests)",
+		awxStats.CurrentSize, awxStats.HitRate, awxStats.Hits, totalRequests)
+
+	return models.GetCacheStatsOutput{
+		AWXCache:  awxDetail,
+		Summary:   summary,
+		Timestamp: timestamp,
 	}, nil
 }

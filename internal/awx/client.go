@@ -11,6 +11,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/NacerKH/autosphere-mcp-golang/internal/cache"
 )
 
 type Client struct {
@@ -19,6 +21,8 @@ type Client struct {
 	password   string
 	token      string
 	httpClient *http.Client
+	debug      bool
+	cache      *cache.Cache
 }
 
 type ClientConfig struct {
@@ -27,6 +31,7 @@ type ClientConfig struct {
 	Password string
 	Token    string
 	Timeout  time.Duration
+	Debug    bool
 }
 
 func NewClient(config ClientConfig) *Client {
@@ -34,13 +39,26 @@ func NewClient(config ClientConfig) *Client {
 		config.Timeout = 30 * time.Second
 	}
 
+	// Configure HTTP transport with connection pooling for better performance
+	transport := &http.Transport{
+		MaxIdleConns:        100,              // Maximum idle connections across all hosts
+		MaxIdleConnsPerHost: 10,               // Maximum idle connections per host
+		IdleConnTimeout:     90 * time.Second, // How long idle connections are kept
+		DisableCompression:  false,            // Enable compression
+		DisableKeepAlives:   false,            // Enable keep-alives for connection reuse
+		ForceAttemptHTTP2:   true,             // Attempt HTTP/2
+	}
+
 	return &Client{
 		baseURL:  strings.TrimSuffix(config.BaseURL, "/"),
 		username: config.Username,
 		password: config.Password,
 		token:    config.Token,
+		debug:    config.Debug,
+		cache:    cache.NewCache(), // Initialize cache with automatic cleanup
 		httpClient: &http.Client{
-			Timeout: config.Timeout,
+			Timeout:   config.Timeout,
+			Transport: transport,
 		},
 	}
 }
@@ -207,9 +225,12 @@ func (c *Client) makeRequest(ctx context.Context, method, endpoint string, body 
 	
 	req.Header.Set("Content-Type", "application/json")
 
-	log.Printf("AWX API Request: %s %s", method, url)
-	if bodyStr != "" {
-		log.Printf("Request Body: %s", bodyStr)
+	// Only log detailed request info in debug mode to reduce I/O overhead
+	if c.debug {
+		log.Printf("AWX API Request: %s %s", method, url)
+		if bodyStr != "" {
+			log.Printf("Request Body: %s", bodyStr)
+		}
 	}
 
 	resp, err := c.httpClient.Do(req)
@@ -218,24 +239,48 @@ func (c *Client) makeRequest(ctx context.Context, method, endpoint string, body 
 	}
 	defer resp.Body.Close()
 
-	respBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return fmt.Errorf("failed to read response body: %w", err)
-	}
-
-	log.Printf("AWX API Response: %d - %s", resp.StatusCode, string(respBody))
-
-	if resp.StatusCode >= 400 {
-		var errResp ErrorResponse
-		if err := json.Unmarshal(respBody, &errResp); err == nil && errResp.Detail != "" {
-			return fmt.Errorf("AWX API error: %s", errResp.Detail)
+	// Log only status code in production, full response in debug mode
+	if c.debug {
+		respBody, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return fmt.Errorf("failed to read response body: %w", err)
 		}
-		return fmt.Errorf("AWX API error: status %d - %s", resp.StatusCode, string(respBody))
-	}
+		log.Printf("AWX API Response: %d - %s", resp.StatusCode, string(respBody))
 
-	if result != nil {
-		if err := json.Unmarshal(respBody, result); err != nil {
-			return fmt.Errorf("failed to decode response: %w", err)
+		// Handle errors
+		if resp.StatusCode >= 400 {
+			var errResp ErrorResponse
+			if err := json.Unmarshal(respBody, &errResp); err == nil && errResp.Detail != "" {
+				return fmt.Errorf("AWX API error: %s", errResp.Detail)
+			}
+			return fmt.Errorf("AWX API error: status %d - %s", resp.StatusCode, string(respBody))
+		}
+
+		// Decode result from memory
+		if result != nil {
+			if err := json.Unmarshal(respBody, result); err != nil {
+				return fmt.Errorf("failed to decode response: %w", err)
+			}
+		}
+	} else {
+		// Production mode: stream decode directly without reading full body into memory
+		log.Printf("AWX API: %s %s -> %d", method, endpoint, resp.StatusCode)
+
+		if resp.StatusCode >= 400 {
+			// Only read body for errors
+			respBody, _ := io.ReadAll(resp.Body)
+			var errResp ErrorResponse
+			if err := json.Unmarshal(respBody, &errResp); err == nil && errResp.Detail != "" {
+				return fmt.Errorf("AWX API error: %s", errResp.Detail)
+			}
+			return fmt.Errorf("AWX API error: status %d - %s", resp.StatusCode, string(respBody))
+		}
+
+		// Success: stream decode directly (no intermediate buffer)
+		if result != nil {
+			if err := json.NewDecoder(resp.Body).Decode(result); err != nil {
+				return fmt.Errorf("failed to decode response: %w", err)
+			}
 		}
 	}
 
@@ -243,11 +288,33 @@ func (c *Client) makeRequest(ctx context.Context, method, endpoint string, body 
 }
 
 func (c *Client) GetJobTemplates(ctx context.Context) ([]JobTemplate, error) {
+	// Cache key for job templates
+	cacheKey := "awx:job_templates"
+
+	// Try cache first
+	if cached, ok := c.cache.Get(cacheKey); ok {
+		if templates, ok := cached.([]JobTemplate); ok {
+			if c.debug {
+				log.Printf("Cache HIT: job templates (%d items)", len(templates))
+			}
+			return templates, nil
+		}
+	}
+
+	if c.debug {
+		log.Printf("Cache MISS: job templates - fetching from AWX")
+	}
+
+	// Cache miss - fetch from AWX
 	var response JobTemplateList
 	err := c.makeRequest(ctx, "GET", "/api/v2/job_templates/", nil, &response)
 	if err != nil {
 		return nil, err
 	}
+
+	// Cache for 5 minutes
+	c.cache.Set(cacheKey, response.Results, 5*time.Minute)
+
 	return response.Results, nil
 }
 
@@ -387,28 +454,72 @@ func (c *Client) CancelJob(ctx context.Context, jobID int) error {
 }
 
 func (c *Client) GetInventories(ctx context.Context) ([]Inventory, error) {
+	// Cache key for inventories
+	cacheKey := "awx:inventories"
+
+	// Try cache first
+	if cached, ok := c.cache.Get(cacheKey); ok {
+		if inventories, ok := cached.([]Inventory); ok {
+			if c.debug {
+				log.Printf("Cache HIT: inventories (%d items)", len(inventories))
+			}
+			return inventories, nil
+		}
+	}
+
+	if c.debug {
+		log.Printf("Cache MISS: inventories - fetching from AWX")
+	}
+
+	// Cache miss - fetch from AWX
 	var response struct {
 		Count   int         `json:"count"`
 		Results []Inventory `json:"results"`
 	}
-	
+
 	err := c.makeRequest(ctx, "GET", "/api/v2/inventories/", nil, &response)
 	if err != nil {
 		return nil, err
 	}
+
+	// Cache for 5 minutes
+	c.cache.Set(cacheKey, response.Results, 5*time.Minute)
+
 	return response.Results, nil
 }
 
 func (c *Client) GetProjects(ctx context.Context) ([]Project, error) {
+	// Cache key for projects
+	cacheKey := "awx:projects"
+
+	// Try cache first
+	if cached, ok := c.cache.Get(cacheKey); ok {
+		if projects, ok := cached.([]Project); ok {
+			if c.debug {
+				log.Printf("Cache HIT: projects (%d items)", len(projects))
+			}
+			return projects, nil
+		}
+	}
+
+	if c.debug {
+		log.Printf("Cache MISS: projects - fetching from AWX")
+	}
+
+	// Cache miss - fetch from AWX
 	var response struct {
 		Count   int       `json:"count"`
 		Results []Project `json:"results"`
 	}
-	
+
 	err := c.makeRequest(ctx, "GET", "/api/v2/projects/", nil, &response)
 	if err != nil {
 		return nil, err
 	}
+
+	// Cache for 10 minutes (projects change less frequently)
+	c.cache.Set(cacheKey, response.Results, 10*time.Minute)
+
 	return response.Results, nil
 }
 
@@ -421,16 +532,47 @@ func (c *Client) LaunchJobByName(ctx context.Context, templateName string, reque
 }
 
 func (c *Client) GetJob(ctx context.Context, jobID int) (*Job, error) {
+	// Cache key for job status
+	cacheKey := fmt.Sprintf("awx:job:%d", jobID)
+
+	// Try cache first (shorter TTL for running jobs)
+	if cached, ok := c.cache.Get(cacheKey); ok {
+		if job, ok := cached.(*Job); ok {
+			// Don't cache completed/failed jobs for too long
+			if job.Status == "successful" || job.Status == "failed" || job.Status == "canceled" {
+				if c.debug {
+					log.Printf("Cache HIT: job %d (status: %s)", jobID, job.Status)
+				}
+				return job, nil
+			}
+		}
+	}
+
+	if c.debug {
+		log.Printf("Cache MISS: job %d - fetching from AWX", jobID)
+	}
+
+	// Fetch from AWX
 	var job Job
 	endpoint := fmt.Sprintf("/api/v2/jobs/%d/", jobID)
 	err := c.makeRequest(ctx, "GET", endpoint, nil, &job)
 	if err != nil {
 		return nil, err
 	}
-	
+
 	// Set the full URL for the job
 	job.URL = c.baseURL + "/#/jobs/playbook/" + strconv.Itoa(jobID)
-	
+
+	// Cache with different TTL based on status
+	var cacheTTL time.Duration
+	if job.Status == "running" || job.Status == "pending" {
+		cacheTTL = 10 * time.Second // Short TTL for running jobs
+	} else {
+		cacheTTL = 5 * time.Minute // Longer TTL for completed jobs
+	}
+
+	c.cache.Set(cacheKey, &job, cacheTTL)
+
 	return &job, nil
 }
 
@@ -456,6 +598,22 @@ func (c *Client) CreateJobTemplate(ctx context.Context, request CreateJobTemplat
 		return nil, fmt.Errorf("failed to create job template: %w", err)
 	}
 
+	// Invalidate job templates cache since we created a new one
+	c.cache.Delete("awx:job_templates")
+
 	log.Printf("Successfully created job template: %s (ID: %d)", template.Name, template.ID)
 	return &template, nil
+}
+
+// ClearCache clears all cached data
+func (c *Client) ClearCache() {
+	c.cache.Clear()
+	if c.debug {
+		log.Printf("AWX client cache cleared")
+	}
+}
+
+// GetCacheStats returns cache statistics
+func (c *Client) GetCacheStats() cache.CacheStats {
+	return c.cache.GetStats()
 }

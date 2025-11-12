@@ -25,13 +25,14 @@ type MCPServer struct {
 }
 
 func NewMCPServer(cfg *config.Config) *MCPServer {
-	// Create AWX client with longer timeout
+	// Create AWX client with connection pooling and optimized settings
 	awxClient := awx.NewClient(awx.ClientConfig{
 		BaseURL:  cfg.AWXBaseURL,
 		Username: cfg.AWXUsername,
 		Password: cfg.AWXPassword,
 		Token:    cfg.AWXToken,
 		Timeout:  120 * time.Second, // Increased to 2 minutes
+		Debug:    cfg.EnableDebug,   // Pass debug flag for conditional logging
 	})
 	
 	// Test AWX connection if credentials are provided
@@ -161,6 +162,12 @@ func (s *MCPServer) registerTools() {
 		mcp.WithString("verbosity", mcp.Description("Playbook verbosity level 0-5 (default: 0)")),
 	)
 	s.server.AddTool(createJobTemplate, s.automationHandler.CreateJobTemplate)
+
+	// Get Cache Statistics Tool
+	getCacheStats := mcp.NewTool("get_cache_stats",
+		mcp.WithDescription("Get cache performance statistics and hit rates"),
+	)
+	s.server.AddTool(getCacheStats, s.automationHandler.GetCacheStats)
 }
 
 func (s *MCPServer) registerResources() {
@@ -258,10 +265,12 @@ func (s *MCPServer) logServerInfo() {
 	log.Printf("Core AWX tools: launch_awx_job, check_awx_job, health_check, autoscale")
 	log.Printf("Enhanced AWX tools: list_awx_jobs, get_job_output, cancel_awx_job, list_awx_resources")
 	log.Printf("Template management: list_job_templates, create_job_template")
+	log.Printf("Cache management: get_cache_stats")
 	log.Printf("Resources: autosphere://config, autosphere://deployment-manifest, autosphere://health-report, autosphere://awx-templates")
 	log.Printf("Prompts: deployment_planning, troubleshooting, scaling_decision, incident_response")
+	log.Printf("⚡ Performance: HTTP/2 connection pooling enabled, intelligent caching (TTL-based)")
 
 	if s.config.EnableDebug {
-		log.Printf("Debug mode enabled")
+		log.Printf("Debug mode enabled - verbose logging active")
 	}
 }
