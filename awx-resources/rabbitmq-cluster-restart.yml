@@ -1,0 +1,140 @@
+---
+# RabbitMQ Cluster Restart Playbook
+# Safely restarts RabbitMQ cluster to fix connection and timeout issues
+
+- name: RabbitMQ Cluster Safe Restart
+  hosts: openstack_controllers
+  gather_facts: yes
+  become: yes
+  serial: 1  # Restart one node at a time
+  vars:
+    rabbitmq_container: "rabbitmq"
+    restart_timeout: 120
+    health_check_retries: 10
+    health_check_delay: 10
+
+  pre_tasks:
+    - name: Verify RabbitMQ cluster status before restart
+      shell: |
+        docker exec {{ rabbitmq_container }} rabbitmqctl cluster_status --formatter json
+      register: pre_cluster_status
+      ignore_errors: yes
+      changed_when: false
+
+    - name: Create pre-restart backup
+      shell: |
+        docker exec {{ rabbitmq_container }} rabbitmqctl export_definitions /tmp/rabbit_backup_{{ ansible_date_time.epoch }}.json
+      ignore_errors: yes
+
+  tasks:
+    - name: Stop RabbitMQ gracefully
+      shell: |
+        docker exec {{ rabbitmq_container }} rabbitmqctl stop_app
+      register: stop_result
+      retries: 3
+      delay: 5
+      until: stop_result.rc == 0
+
+    - name: Wait for application to stop
+      pause:
+        seconds: 10
+
+    - name: Start RabbitMQ application
+      shell: |
+        docker exec {{ rabbitmq_container }} rabbitmqctl start_app
+      register: start_result
+      retries: 3
+      delay: 5
+      until: start_result.rc == 0
+
+    - name: Wait for cluster to stabilize
+      pause:
+        seconds: 15
+
+    - name: Verify cluster health
+      shell: |
+        docker exec {{ rabbitmq_container }} rabbitmqctl cluster_status --formatter json
+      register: post_cluster_status
+      retries: "{{ health_check_retries }}"
+      delay: "{{ health_check_delay }}"
+      until: post_cluster_status.rc == 0 and 'running' in post_cluster_status.stdout
+      changed_when: false
+
+    - name: Check cluster synchronization
+      shell: |
+        docker exec {{ rabbitmq_container }} rabbitmqctl list_queues name messages_ready messages_unacknowledged
+      register: queue_status
+      changed_when: false
+
+    - name: Verify connections restored
+      shell: |
+        docker logs {{ rabbitmq_container }} --since 2m 2>&1 | grep -c "accepting AMQP connection" || true
+      register: connection_count
+      changed_when: false
+
+    - name: Generate restart report
+      set_fact:
+        restart_report:
+          timestamp: "{{ ansible_date_time.iso8601 }}"
+          hostname: "{{ inventory_hostname }}"
+          status: "{{ 'success' if post_cluster_status.rc == 0 else 'failed' }}"
+          cluster_healthy: "{{ 'running' in post_cluster_status.stdout }}"
+          connections_restored: "{{ connection_count.stdout | int }}"
+          queue_count: "{{ queue_status.stdout_lines | length }}"
+
+    - name: Display restart summary
+      debug:
+        msg: |
+          ╔════════════════════════════════════════════════════════════╗
+          ║        RABBITMQ RESTART SUMMARY                            ║
+          ╚════════════════════════════════════════════════════════════╝
+          
+          📅 Timestamp: {{ restart_report.timestamp }}
+          🖥️  Host: {{ restart_report.hostname }}
+          ✅ Status: {{ restart_report.status | upper }}
+          🐰 Cluster Healthy: {{ restart_report.cluster_healthy }}
+          🔌 Connections Restored: {{ restart_report.connections_restored }}
+          📬 Active Queues: {{ restart_report.queue_count }}
+          
+          ╚════════════════════════════════════════════════════════════╝
+
+  post_tasks:
+    - name: Wait for OpenStack services to reconnect
+      pause:
+        seconds: 30
+        prompt: "Waiting for OpenStack services to reconnect to RabbitMQ..."
+
+    - name: Verify Nova services reconnected
+      shell: |
+        docker exec nova_api nova-manage service list | grep -c ":-)" || true
+      register: nova_up
+      retries: 5
+      delay: 10
+      until: nova_up.stdout | int > 0
+      changed_when: false
+
+    - name: Verify Neutron agents reconnected
+      shell: |
+        docker exec neutron_server neutron agent-list -f json | jq -r '.[] | select(.alive==true) | .agent_type' | wc -l
+      register: neutron_up
+      retries: 5
+      delay: 10
+      until: neutron_up.stdout | int > 0
+      changed_when: false
+
+    - name: Final health check
+      shell: |
+        docker exec {{ rabbitmq_container }} rabbitmqctl status
+      register: final_status
+      changed_when: false
+
+    - name: Save restart report
+      copy:
+        content: "{{ restart_report | to_nice_json }}"
+        dest: "/var/log/autosphere/rabbit_restart_{{ ansible_date_time.epoch }}.json"
+      delegate_to: localhost
+
+    - name: Fail if restart unsuccessful
+      fail:
+        msg: "RabbitMQ restart failed - cluster not healthy"
+      when: not restart_report.cluster_healthy

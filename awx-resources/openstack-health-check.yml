@@ -1,0 +1,182 @@
+---
+# OpenStack Health Check Playbook
+# Detects issues with OpenStack services for AutoSphere self-healing
+
+- name: OpenStack Services Health Check
+  hosts: openstack_controllers
+  gather_facts: yes
+  become: yes
+  vars:
+    health_status: {}
+    critical_services:
+      - nova-api
+      - nova-scheduler
+      - nova-conductor
+      - nova-compute
+      - neutron-server
+      - neutron-l3-agent
+      - neutron-dhcp-agent
+      - neutron-openvswitch-agent
+      - cinder-api
+      - cinder-scheduler
+      - cinder-volume
+      - glance-api
+      - keystone
+      - rabbitmq-server
+      - mariadb
+
+  tasks:
+    - name: Check RabbitMQ cluster status
+      shell: |
+        docker exec rabbitmq rabbitmqctl cluster_status --formatter json
+      register: rabbitmq_status
+      ignore_errors: yes
+      changed_when: false
+
+    - name: Parse RabbitMQ health
+      set_fact:
+        rabbitmq_healthy: "{{ (rabbitmq_status.rc == 0) and ('running' in rabbitmq_status.stdout) }}"
+
+    - name: Check MariaDB/Galera cluster status
+      shell: |
+        docker exec mariadb mysql -e "SHOW STATUS LIKE 'wsrep_cluster_size';" | grep wsrep_cluster_size | awk '{print $2}'
+      register: galera_cluster_size
+      ignore_errors: yes
+      changed_when: false
+
+    - name: Check OpenStack service containers
+      shell: |
+        docker ps --filter "name={{ item }}" --format "{{{{.Status}}}}"
+      register: container_status
+      loop: "{{ critical_services }}"
+      ignore_errors: yes
+      changed_when: false
+
+    - name: Check Nova compute service status
+      shell: |
+        docker exec nova_api nova-manage service list | grep -E "nova-compute|nova-scheduler|nova-conductor"
+      register: nova_services
+      ignore_errors: yes
+      changed_when: false
+
+    - name: Check Neutron agents status
+      shell: |
+        docker exec neutron_server neutron agent-list -f json
+      register: neutron_agents
+      ignore_errors: yes
+      changed_when: false
+
+    - name: Check Cinder services status
+      shell: |
+        docker exec cinder_api cinder service-list --binary cinder-volume
+      register: cinder_services
+      ignore_errors: yes
+      changed_when: false
+
+    - name: Check API endpoints
+      uri:
+        url: "{{ item.url }}"
+        method: GET
+        status_code: [200, 300]
+        validate_certs: no
+      register: api_health
+      loop:
+        - { name: "keystone", url: "http://{{ ansible_default_ipv4.address }}:5000/v3" }
+        - { name: "nova", url: "http://{{ ansible_default_ipv4.address }}:8774/v2.1" }
+        - { name: "neutron", url: "http://{{ ansible_default_ipv4.address }}:9696/v2.0" }
+        - { name: "cinder", url: "http://{{ ansible_default_ipv4.address }}:8776/v3" }
+        - { name: "glance", url: "http://{{ ansible_default_ipv4.address }}:9292/v2" }
+      ignore_errors: yes
+
+    - name: Check for timeout errors in logs (last 10 minutes)
+      shell: |
+        find /var/log/kolla -name "*.log" -mmin -10 -exec grep -l "TimeoutError\|MessagingTimeout\|ConnectionRefused" {} \; | head -20
+      register: timeout_errors
+      changed_when: false
+
+    - name: Check RabbitMQ connection errors
+      shell: |
+        docker logs rabbitmq --since 10m 2>&1 | grep -c "connection_closed\|channel_error" || true
+      register: rabbitmq_errors
+      changed_when: false
+
+    - name: Identify cascading failures
+      set_fact:
+        cascade_pattern: >-
+          {{ (not rabbitmq_healthy) and 
+             (nova_services.rc != 0 or neutron_agents.rc != 0 or cinder_services.rc != 0) }}
+
+    - name: Generate health report
+      set_fact:
+        openstack_health:
+          timestamp: "{{ ansible_date_time.iso8601 }}"
+          hostname: "{{ inventory_hostname }}"
+          overall_status: "{{ 'critical' if cascade_pattern else ('warning' if timeout_errors.stdout_lines | length > 0 else 'healthy') }}"
+          rabbitmq:
+            status: "{{ 'healthy' if rabbitmq_healthy else 'critical' }}"
+            error_count: "{{ rabbitmq_errors.stdout | int }}"
+          galera:
+            cluster_size: "{{ galera_cluster_size.stdout | default('unknown') }}"
+            status: "{{ 'healthy' if (galera_cluster_size.stdout | default('0') | int >= 3) else 'warning' }}"
+          services:
+            containers: "{{ container_status.results | selectattr('rc', 'equalto', 0) | map(attribute='item') | list }}"
+            containers_down: "{{ container_status.results | selectattr('rc', 'ne', 0) | map(attribute='item') | list }}"
+          api_endpoints:
+            healthy: "{{ api_health.results | selectattr('status', 'in', [200, 300]) | map(attribute='item.name') | list }}"
+            unhealthy: "{{ api_health.results | rejectattr('status', 'in', [200, 300]) | map(attribute='item.name') | list }}"
+          errors:
+            timeout_files: "{{ timeout_errors.stdout_lines | length }}"
+            timeout_logs: "{{ timeout_errors.stdout_lines[:5] }}"
+          cascade_failure_detected: "{{ cascade_pattern }}"
+          recommended_action: >-
+            {{ 'Restart RabbitMQ cluster immediately - cascade failure detected' if cascade_pattern
+               else ('Investigate timeout errors' if timeout_errors.stdout_lines | length > 0
+               else 'No action needed - system healthy') }}
+
+    - name: Save health report
+      copy:
+        content: "{{ openstack_health | to_nice_json }}"
+        dest: "/var/log/autosphere/health_{{ ansible_date_time.epoch }}.json"
+      delegate_to: localhost
+
+    - name: Display health summary
+      debug:
+        msg: |
+          ╔════════════════════════════════════════════════════════════╗
+          ║        OPENSTACK HEALTH CHECK SUMMARY                      ║
+          ╚════════════════════════════════════════════════════════════╝
+          
+          📅 Timestamp: {{ openstack_health.timestamp }}
+          🖥️  Host: {{ openstack_health.hostname }}
+          
+          ⚡ OVERALL STATUS: {{ openstack_health.overall_status | upper }}
+          
+          🐰 RabbitMQ: {{ openstack_health.rabbitmq.status }}
+             └─ Errors (last 10m): {{ openstack_health.rabbitmq.error_count }}
+          
+          💾 Galera Cluster: {{ openstack_health.galera.status }}
+             └─ Cluster Size: {{ openstack_health.galera.cluster_size }}
+          
+          🔧 Containers Down: {{ openstack_health.services.containers_down | length }}
+             {% if openstack_health.services.containers_down | length > 0 %}
+             └─ {{ openstack_health.services.containers_down | join(', ') }}
+             {% endif %}
+          
+          🌐 API Endpoints Unhealthy: {{ openstack_health.api_endpoints.unhealthy | length }}
+             {% if openstack_health.api_endpoints.unhealthy | length > 0 %}
+             └─ {{ openstack_health.api_endpoints.unhealthy | join(', ') }}
+             {% endif %}
+          
+          ⚠️  Timeout Errors: {{ openstack_health.errors.timeout_files }}
+          
+          🔥 CASCADE FAILURE: {{ 'YES - CRITICAL!' if openstack_health.cascade_failure_detected else 'NO' }}
+          
+          💡 RECOMMENDED ACTION:
+          {{ openstack_health.recommended_action }}
+          
+          ╚════════════════════════════════════════════════════════════╝
+
+    - name: Fail if critical
+      fail:
+        msg: "Critical health issues detected: {{ openstack_health.recommended_action }}"
+      when: openstack_health.overall_status == 'critical'

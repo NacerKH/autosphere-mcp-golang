@@ -1,0 +1,145 @@
+---
+# Neutron Service Restart Playbook
+# Restarts Neutron network services to recover from RabbitMQ connection failures
+
+- name: Neutron Services Restart and Recovery
+  hosts: openstack_controllers:openstack_network
+  gather_facts: yes
+  become: yes
+  vars:
+    neutron_services:
+      - neutron_server
+      - neutron_l3_agent
+      - neutron_dhcp_agent
+      - neutron_metadata_agent
+      - neutron_openvswitch_agent
+    restart_delay: 15
+
+  tasks:
+    - name: Check current Neutron agent status
+      shell: |
+        docker exec neutron_server neutron agent-list -f json
+      register: pre_agent_status
+      ignore_errors: yes
+      changed_when: false
+      run_once: true
+
+    - name: Parse down agents
+      set_fact:
+        down_agents: "{{ (pre_agent_status.stdout | from_json) | selectattr('alive', 'equalto', false) | list }}"
+      when: pre_agent_status.rc == 0
+      run_once: true
+
+    - name: Stop Neutron containers
+      shell: |
+        docker stop {{ item }}
+      loop: "{{ neutron_services }}"
+      register: stop_result
+      ignore_errors: yes
+
+    - name: Wait for clean shutdown
+      pause:
+        seconds: "{{ restart_delay }}"
+
+    - name: Start Neutron containers
+      shell: |
+        docker start {{ item }}
+      loop: "{{ neutron_services }}"
+      register: start_result
+      ignore_errors: yes
+
+    - name: Wait for services to initialize
+      pause:
+        seconds: "{{ restart_delay }}"
+
+    - name: Verify Neutron API responding
+      uri:
+        url: "http://{{ ansible_default_ipv4.address }}:9696/v2.0"
+        method: GET
+        status_code: [200, 300]
+        validate_certs: no
+      register: neutron_api_check
+      retries: 10
+      delay: 5
+      until: neutron_api_check.status in [200, 300]
+      when: "'neutron_server' in neutron_services"
+
+    - name: Check post-restart agent status
+      shell: |
+        docker exec neutron_server neutron agent-list -f json
+      register: post_agent_status
+      retries: 10
+      delay: 10
+      until: post_agent_status.rc == 0
+      changed_when: false
+      run_once: true
+
+    - name: Count agents alive
+      shell: |
+        docker exec neutron_server neutron agent-list -f json | jq -r '.[] | select(.alive==true) | .agent_type' | wc -l
+      register: agents_alive
+      changed_when: false
+      run_once: true
+
+    - name: Verify network connectivity
+      shell: |
+        docker exec neutron_server openstack network list --limit 1 -f json
+      register: network_list_test
+      ignore_errors: yes
+      changed_when: false
+      run_once: true
+
+    - name: Test DHCP agents
+      shell: |
+        docker exec neutron_server neutron agent-list --agent-type dhcp -f json | jq -r '.[] | select(.alive==true) | .id' | wc -l
+      register: dhcp_agents
+      changed_when: false
+      run_once: true
+
+    - name: Generate restart report
+      set_fact:
+        neutron_restart_report:
+          timestamp: "{{ ansible_date_time.iso8601 }}"
+          hostname: "{{ inventory_hostname }}"
+          agents_before_down: "{{ down_agents | length if down_agents is defined else 'unknown' }}"
+          agents_after_alive: "{{ agents_alive.stdout | int }}"
+          dhcp_agents_active: "{{ dhcp_agents.stdout | int }}"
+          api_responsive: "{{ neutron_api_check.status in [200, 300] if neutron_api_check is defined else false }}"
+          network_operations_working: "{{ network_list_test.rc == 0 }}"
+          overall_status: "{{ 'success' if (agents_alive.stdout | int > 0) and (network_list_test.rc == 0) else 'partial' }}"
+
+    - name: Display restart summary
+      debug:
+        msg: |
+          ╔════════════════════════════════════════════════════════════╗
+          ║        NEUTRON SERVICES RESTART SUMMARY                    ║
+          ╚════════════════════════════════════════════════════════════╝
+          
+          📅 Timestamp: {{ neutron_restart_report.timestamp }}
+          🖥️  Host: {{ neutron_restart_report.hostname }}
+          
+          📊 Agents Status:
+             └─ Before: {{ neutron_restart_report.agents_before_down }} down
+             └─ After: {{ neutron_restart_report.agents_after_alive }} alive
+          
+          🌐 API Responsive: {{ neutron_restart_report.api_responsive }}
+          📡 DHCP Agents: {{ neutron_restart_report.dhcp_agents_active }}
+          🔌 Network Operations: {{ 'Working' if neutron_restart_report.network_operations_working else 'Issues detected' }}
+          
+          ✅ OVERALL: {{ neutron_restart_report.overall_status | upper }}
+          
+          ╚════════════════════════════════════════════════════════════╝
+      run_once: true
+
+    - name: Save restart report
+      copy:
+        content: "{{ neutron_restart_report | to_nice_json }}"
+        dest: "/var/log/autosphere/neutron_restart_{{ ansible_date_time.epoch }}.json"
+      delegate_to: localhost
+      run_once: true
+
+    - name: Alert if restart incomplete
+      debug:
+        msg: "WARNING: Neutron restart incomplete - manual intervention may be required"
+      when: neutron_restart_report.overall_status != 'success'
+      run_once: true

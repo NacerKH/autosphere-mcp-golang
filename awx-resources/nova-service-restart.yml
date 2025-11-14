@@ -1,0 +1,146 @@
+---
+# Nova Service Restart Playbook
+# Restarts Nova compute services to recover from RabbitMQ connection failures
+
+- name: Nova Services Restart and Recovery
+  hosts: openstack_controllers:openstack_compute
+  gather_facts: yes
+  become: yes
+  vars:
+    nova_services:
+      - nova_api
+      - nova_scheduler
+      - nova_conductor
+      - nova_compute
+      - nova_novncproxy
+    restart_delay: 15
+
+  tasks:
+    - name: Check current Nova service status
+      shell: |
+        docker exec nova_api nova-manage service list
+      register: pre_service_status
+      ignore_errors: yes
+      changed_when: false
+      run_once: true
+
+    - name: Identify down services
+      set_fact:
+        down_services: "{{ pre_service_status.stdout_lines | select('search', 'XXX|down') | list }}"
+
+    - name: Stop Nova containers
+      shell: |
+        docker stop {{ item }}
+      loop: "{{ nova_services }}"
+      register: stop_result
+      ignore_errors: yes
+      when: "item in (ansible_facts.get('docker_containers', {}).keys() | list)"
+
+    - name: Wait for clean shutdown
+      pause:
+        seconds: "{{ restart_delay }}"
+
+    - name: Start Nova containers
+      shell: |
+        docker start {{ item }}
+      loop: "{{ nova_services }}"
+      register: start_result
+      ignore_errors: yes
+      when: "item in (ansible_facts.get('docker_containers', {}).keys() | list)"
+
+    - name: Wait for services to initialize
+      pause:
+        seconds: "{{ restart_delay }}"
+
+    - name: Verify Nova API responding
+      uri:
+        url: "http://{{ ansible_default_ipv4.address }}:8774/v2.1"
+        method: GET
+        status_code: [200, 300]
+        validate_certs: no
+      register: nova_api_check
+      retries: 10
+      delay: 5
+      until: nova_api_check.status in [200, 300]
+      when: "'nova_api' in nova_services"
+
+    - name: Check post-restart service status
+      shell: |
+        docker exec nova_api nova-manage service list
+      register: post_service_status
+      retries: 10
+      delay: 10
+      until: post_service_status.rc == 0
+      changed_when: false
+      run_once: true
+
+    - name: Count services up
+      shell: |
+        docker exec nova_api nova-manage service list | grep -c ":-)" || true
+      register: services_up
+      changed_when: false
+      run_once: true
+
+    - name: Verify compute nodes registered
+      shell: |
+        docker exec nova_api nova hypervisor-list -f json | jq -r '.[].Status' | grep -c "enabled" || true
+      register: compute_nodes
+      changed_when: false
+      run_once: true
+      when: "'nova_api' in nova_services"
+
+    - name: Test VM operation
+      shell: |
+        docker exec nova_api openstack server list --limit 1 -f json
+      register: vm_list_test
+      ignore_errors: yes
+      changed_when: false
+      run_once: true
+
+    - name: Generate restart report
+      set_fact:
+        nova_restart_report:
+          timestamp: "{{ ansible_date_time.iso8601 }}"
+          hostname: "{{ inventory_hostname }}"
+          services_before: "{{ down_services | length }}"
+          services_after_up: "{{ services_up.stdout | int }}"
+          compute_nodes_online: "{{ compute_nodes.stdout | default('N/A') }}"
+          api_responsive: "{{ nova_api_check.status in [200, 300] if nova_api_check is defined else false }}"
+          vm_operations_working: "{{ vm_list_test.rc == 0 }}"
+          overall_status: "{{ 'success' if (services_up.stdout | int > 0) and (vm_list_test.rc == 0) else 'partial' }}"
+
+    - name: Display restart summary
+      debug:
+        msg: |
+          ╔════════════════════════════════════════════════════════════╗
+          ║        NOVA SERVICES RESTART SUMMARY                       ║
+          ╚════════════════════════════════════════════════════════════╝
+          
+          📅 Timestamp: {{ nova_restart_report.timestamp }}
+          🖥️  Host: {{ nova_restart_report.hostname }}
+          
+          📊 Services Status:
+             └─ Before: {{ nova_restart_report.services_before }} down
+             └─ After: {{ nova_restart_report.services_after_up }} up
+          
+          💻 Compute Nodes: {{ nova_restart_report.compute_nodes_online }}
+          🌐 API Responsive: {{ nova_restart_report.api_responsive }}
+          🖥️  VM Operations: {{ 'Working' if nova_restart_report.vm_operations_working else 'Issues detected' }}
+          
+          ✅ OVERALL: {{ nova_restart_report.overall_status | upper }}
+          
+          ╚════════════════════════════════════════════════════════════╝
+      run_once: true
+
+    - name: Save restart report
+      copy:
+        content: "{{ nova_restart_report | to_nice_json }}"
+        dest: "/var/log/autosphere/nova_restart_{{ ansible_date_time.epoch }}.json"
+      delegate_to: localhost
+      run_once: true
+
+    - name: Alert if restart incomplete
+      debug:
+        msg: "WARNING: Nova restart incomplete - manual intervention may be required"
+      when: nova_restart_report.overall_status != 'success'
+      run_once: true
